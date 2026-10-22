@@ -100,18 +100,25 @@ export function Slider({ label, value, min, max, step = 1, defaultValue, format 
       return;
     }
     lastTap.current = now;
-    e.currentTarget.setPointerCapture(e.pointerId);
+    const pid = e.pointerId;
     drag.current = true;
     onStart?.();
     onChange(valueFrom(e.clientX));
-  };
-  const move = (e) => {
-    if (drag.current) onChange(valueFrom(e.clientX));
-  };
-  const up = () => {
-    if (!drag.current) return;
-    drag.current = false;
-    onEnd?.();
+    // Segue o dedo pela janela inteira: continua funcionando mesmo se o dedo sair da barra.
+    const move = (ev) => {
+      if (ev.pointerId === pid) onChange(valueFrom(ev.clientX));
+    };
+    const up = (ev) => {
+      if (ev.pointerId !== pid) return;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      drag.current = false;
+      onEnd?.();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   };
   const key = (e) => {
     const d = e.key === 'ArrowRight' || e.key === 'ArrowUp' ? step : e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -step : 0;
@@ -128,7 +135,7 @@ export function Slider({ label, value, min, max, step = 1, defaultValue, format 
         <span>{label}</span>
         <b>{format(value)}</b>
       </div>
-      <div ref={ref} className="m-slider-track" role="slider" tabIndex={0} aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={value} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onKeyDown={key}>
+      <div ref={ref} className="m-slider-track" role="slider" tabIndex={0} aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={value} onPointerDown={down} onKeyDown={key}>
         <div className="m-slider-rail">
           <div className="m-slider-fill" style={{ width: frac * 100 + '%' }} />
         </div>

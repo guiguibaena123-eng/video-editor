@@ -307,11 +307,7 @@ export default function MTimeline({ onAdd }) {
     s.select([clip.id]);
     s.gestureStart();
     haptic(10);
-    const el = e.currentTarget;
-    try {
-      el.setPointerCapture(e.pointerId);
-    } catch {}
-    setLifted(clip.id);
+    const pid = e.pointerId;
 
     const snap = (v) => {
       if (!p.settings.snap) return v;
@@ -321,6 +317,7 @@ export default function MTimeline({ onAdd }) {
       return r === null ? v : r;
     };
     const move = (ev) => {
+      if (ev.pointerId !== pid) return;
       const dt = (ev.clientX - sx) / z;
       useStore.getState().live((q) => {
         const c = q.clips.find((x) => x.id === clip.id);
@@ -351,16 +348,17 @@ export default function MTimeline({ onAdd }) {
         }
       });
     };
-    const up = () => {
-      el.removeEventListener('pointermove', move);
-      el.removeEventListener('pointerup', up);
-      el.removeEventListener('pointercancel', up);
-      setLifted(null);
+    const up = (ev) => {
+      if (ev.pointerId !== pid) return;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
       useStore.getState().gestureEnd();
     };
-    el.addEventListener('pointermove', move);
-    el.addEventListener('pointerup', up);
-    el.addEventListener('pointercancel', up);
+    // Na janela inteira (não só na alça): não depende da captura de ponteiro e segue o dedo para fora da linha.
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   };
 
   // ---------- desenho ----------
