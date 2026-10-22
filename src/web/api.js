@@ -1,7 +1,7 @@
 // Versão para navegador do window.api do Electron: leitura de mídia, miniaturas, onda de áudio e a
 // biblioteca de projetos (IndexedDB). Assim o motor, a store e as ops do PC rodam sem mudanças no celular.
 import { dbPut, dbGet, dbDelete, dbAll, dbKeys } from './db';
-import { registerBlob, webBlob, webUrl, webName, webId, isWebPath, makeWebPath } from './registry';
+import { registerBlob, webBlob, webUrl, webName, webId, isWebPath, makeWebPath, prewarmVideo } from './registry';
 import { useStore } from '../store';
 import { engine } from '../engine';
 
@@ -33,6 +33,7 @@ export async function storeFiles(fileList) {
     const id = rid();
     const path = makeWebPath(id, f.name || 'arquivo');
     registerBlob(path, f);
+    if (typeOfFile(f) === 'video') prewarmVideo(path);
     const job = dbPut('files', id, { blob: f, name: f.name, type: f.type, size: f.size })
       .catch((err) => useStore.getState().notify('Não foi possível guardar "' + (f.name || 'arquivo') + '" no aparelho (falta de espaço?): ' + String(err?.message || err), 'error'))
       .finally(() => pendingWrites.delete(job));

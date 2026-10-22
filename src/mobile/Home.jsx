@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { createProject, fillProject, openLibraryProject, cleanError } from '../ops';
+import { createProject, fillOne, openLibraryProject, cleanError } from '../ops';
 import { Icon, Logo } from '../icons';
 import { fmtDuration } from '../util';
 import { Sheet, askConfirm, askText, haptic } from './ui';
@@ -46,7 +46,10 @@ export default function MHome() {
     if (!files.length) return;
     setNewOpen(false);
     await createProject({ name: nextName() });
-    fillProject(await importFiles(files));
+    // Cada arquivo entra na linha do tempo assim que fica pronto: o primeiro não espera os outros.
+    let n = 0;
+    await importFiles(files, (m) => fillOne(m, n++ === 0));
+    if (n) useStore.getState().notify(`Projeto criado com ${n} ${n === 1 ? 'arquivo' : 'arquivos'}.`);
     useStore.getState().select([]);
   };
   const empty = async (aspect) => {

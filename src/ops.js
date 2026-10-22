@@ -520,21 +520,25 @@ export function seek(t) {
 
 // ---------- Importação ----------
 
-export async function importPaths(paths) {
+export async function importPaths(paths, onEach) {
   const { notify } = useStore.getState();
   const existing = new Set(useStore.getState().media.map((m) => m.path.toLowerCase()));
   const fresh = paths.filter((p) => !existing.has(p.toLowerCase()));
   const added = [];
-  for (const path of fresh) {
-    try {
-      const info = await window.api.probe(path);
-      const media = { id: uid('m'), ...info };
-      useStore.setState((s) => ({ media: [...s.media, media] }));
-      loadMediaCache(media);
-      added.push(media);
-    } catch (err) {
+  // Lê as informações de todos os arquivos ao mesmo tempo, mas entrega na ordem escolhida: o primeiro já aparece
+  // (onEach) assim que fica pronto, sem esperar os outros.
+  const jobs = fresh.map((path) => window.api.probe(path).then((info) => ({ path, info }), (err) => ({ path, err })));
+  for (const job of jobs) {
+    const { path, info, err } = await job;
+    if (err) {
       notify(`Não foi possível importar ${path.split(/[\\/]/).pop()}: ${cleanError(err)}`, 'error');
+      continue;
     }
+    const media = { id: uid('m'), ...info };
+    useStore.setState((s) => ({ media: [...s.media, media] }));
+    loadMediaCache(media);
+    added.push(media);
+    onEach?.(media);
   }
   if (added.length) useStore.setState({ dirty: true });
   return added;
@@ -664,6 +668,18 @@ export async function createProject({ aspect = '16:9', name } = {}) {
 export async function createProjectFromFiles(fileList) {
   await createProject();
   fillProject(await importDroppedFiles(fileList));
+}
+
+// Põe um arquivo recém-importado na linha do tempo; o primeiro vídeo/foto define o formato do projeto.
+export function fillOne(m, isFirst) {
+  if (isFirst && m.type !== 'audio' && m.width && m.height) {
+    const r = m.width / m.height;
+    const aspect = r < 0.9 ? '9:16' : r < 1.1 ? '1:1' : '16:9';
+    const [width, height] = ASPECTS[aspect];
+    useStore.getState().commit((p) => Object.assign(p.settings, { aspect, width, height }));
+  }
+  addMediaToTimeline(m, {});
+  if (isFirst) useStore.setState({ currentTime: 0 });
 }
 
 export function fillProject(added) {

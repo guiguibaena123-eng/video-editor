@@ -23,14 +23,22 @@ export function pickFiles({ accept = 'video/*,image/*,audio/*' } = {}) {
 }
 
 // Guarda os arquivos no aparelho, lê as informações e põe na biblioteca de mídia do projeto.
-export async function importFiles(files) {
+export async function importFiles(files, onEach) {
   if (!files.length) return [];
   const s = useStore.getState();
   useStore.setState({ busy: { label: files.length > 1 ? `Importando ${files.length} arquivos…` : 'Importando…', progress: null } });
   try {
     requestPersistence();
     const paths = await storeFiles(files);
-    return await importPaths(paths);
+    // O aviso "Importando…" some assim que o primeiro arquivo está pronto; os outros continuam entrando.
+    let first = true;
+    return await importPaths(paths, (m) => {
+      if (first) {
+        first = false;
+        useStore.setState({ busy: null });
+      }
+      onEach?.(m);
+    });
   } catch (err) {
     s.notify('Não foi possível importar: ' + cleanError(err), 'error');
     return [];

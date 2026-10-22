@@ -23,3 +23,30 @@ export function registerBlob(path, blob) {
 export const webUrl = (p) => urls.get(p) || '';
 export const webBlob = (p) => blobs.get(p) || null;
 export const hasWebMedia = (p) => urls.has(p);
+
+// Elementos de vídeo "aquecidos": começam a carregar o arquivo assim que ele é escolhido (junto com a leitura das
+// informações), e o player os adota ao criar o clipe — o primeiro quadro fica pronto bem antes.
+const warm = new Map(); // caminho -> { el, timer }
+export function prewarmVideo(path, max = 1) {
+  if (warm.has(path) || warm.size >= max || !urls.has(path)) return;
+  const el = document.createElement('video');
+  el.crossOrigin = 'anonymous';
+  el.preload = 'auto';
+  el.playsInline = true;
+  el.muted = true;
+  el.src = urls.get(path);
+  // Não adotado em 25 s: solta o decodificador (celulares limitam quantos podem existir ao mesmo tempo).
+  const timer = setTimeout(() => {
+    warm.delete(path);
+    el.removeAttribute('src');
+    el.load();
+  }, 25000);
+  warm.set(path, { el, timer });
+}
+export function takePrewarmed(path) {
+  const w = warm.get(path);
+  if (!w) return null;
+  clearTimeout(w.timer);
+  warm.delete(path);
+  return w.el;
+}

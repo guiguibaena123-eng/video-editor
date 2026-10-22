@@ -9,6 +9,7 @@ import { effectiveAudio } from './transitions';
 import { hasImageFx, imageFxAt, needsGLPass, withTrackFx } from './effects';
 import { lutFor, spatialOf, onLutReady } from './colorRuntime';
 import { useStore, clipEnd, projectDuration, mediaUrl, cropOf, croppedSize } from './store';
+import { takePrewarmed } from './web/registry';
 
 // iPhone/iPad: o navegador ignora o volume do elemento de mídia, então o som precisa passar pelo WebAudio.
 export const IOS_LIKE = typeof navigator !== 'undefined' && (/iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
@@ -363,11 +364,12 @@ class Engine {
       entry.primed = false;
     }
     if (!entry) {
-      const el = document.createElement('video');
+      // Vídeo importado agora: adota o elemento que já começou a carregar (celular); senão cria um novo.
+      const el = takePrewarmed(want) || document.createElement('video');
       el.crossOrigin = 'anonymous';
       el.preload = 'auto';
       el.playsInline = true;
-      el.src = mediaUrl(want);
+      if (!el.src) el.src = mediaUrl(want);
       el.addEventListener('seeked', () => this.requestDraw());
       el.addEventListener('loadeddata', () => this.requestDraw());
       entry = { el, mediaId: media.id, gain: null, primed: false, srcPath: want, live: false };

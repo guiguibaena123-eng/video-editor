@@ -31,8 +31,7 @@ export default function MEditor() {
   const add = async () => {
     const files = await pickFiles();
     if (!files.length) return;
-    const added = await importFiles(files);
-    for (const m of added) addMediaToTimeline(m, {});
+    const added = await importFiles(files, (m) => addMediaToTimeline(m, {}));
     if (added.length) haptic(10);
   };
 
