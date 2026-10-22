@@ -35,6 +35,10 @@ class Engine {
   lastTickMs = 0;
   heldMs = 0;
   stalledPrev = false;
+  frameFlag = false; // chegou um quadro novo do vídeo (requestVideoFrameCallback)
+  lastDrawAt = 0;
+  drewNow = false;
+  rvfc = typeof HTMLVideoElement !== 'undefined' && 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
 
   drawUntil = 0; // o player só redesenha parado enquanto algo mudou (poupa CPU/GPU/bateria)
   slowFrames = 0;
@@ -210,6 +214,9 @@ class Engine {
     this.ensureAudio();
     const start = s.currentTime >= total - 0.01 ? 0 : s.currentTime;
     this.clock = { t0: start, wall0: performance.now() };
+    this.lastTickMs = performance.now();
+    this.heldMs = 0;
+    this.stalledPrev = this.lite; // no celular o relógio só anda quando o vídeo já está rodando
     this.lastTime = start;
     this.playing = true;
     useStore.setState({ playing: true, currentTime: start });
@@ -261,7 +268,19 @@ class Engine {
       el.src = mediaUrl(want);
       el.addEventListener('seeked', () => this.requestDraw());
       el.addEventListener('loadeddata', () => this.requestDraw());
-      entry = { el, mediaId: media.id, gain: null, primed: false, srcPath: want };
+      entry = { el, mediaId: media.id, gain: null, primed: false, srcPath: want, live: false };
+      // "live" = o vídeo está de fato rodando agora (não só mandado tocar): o relógio espera por isso.
+      const setLive = (v) => () => void (entry.live = v);
+      el.addEventListener('playing', setLive(true));
+      for (const ev of ['pause', 'waiting', 'seeking', 'ended', 'emptied']) el.addEventListener(ev, setLive(false));
+      // Cada quadro novo do vídeo pede um desenho: o player acompanha o ritmo real do vídeo, sem pular quadros.
+      if (this.lite && this.rvfc) {
+        const cb = () => {
+          this.frameFlag = true;
+          if (this.entries.get(clip.id)?.el === el) el.requestVideoFrameCallback(cb);
+        };
+        el.requestVideoFrameCallback(cb);
+      }
       this.entries.set(clip.id, entry);
       this.connect(entry);
     }
@@ -298,14 +317,15 @@ class Engine {
   loop = () => {
     this.raf = requestAnimationFrame(this.loop);
     const now = performance.now();
-    if (this.playing && this.maxFps && now - this.lastFrameAt < 1000 / this.maxFps - 3) return;
     this.lastFrameAt = now;
+    this.drewNow = false;
     try {
       this.frame();
     } catch (err) {
       console.error(err);
     }
-    this.watchSpeed(now);
+    // No perfil leve o ritmo é o dos desenhos (não o do rAF, que roda a 60 Hz só para manter o relógio colado).
+    if (!this.lite || this.drewNow) this.watchSpeed(now);
   };
 
   // No modo "Automático" da qualidade, se a reprodução não acompanha o relógio a imagem do player
@@ -320,7 +340,7 @@ class Engine {
     if (this.lastLoop) {
       const dt = now - this.lastLoop;
       this.emaInterval = this.emaInterval ? this.emaInterval * 0.9 + dt * 0.1 : dt;
-      const budget = 1000 / Math.min(60, s.project.settings.fps || 30);
+      const budget = 1000 / Math.min(this.lite && this.maxFps ? this.maxFps : 60, s.project.settings.fps || 30);
       if (this.emaInterval > budget * 1.4) this.slowFrames++;
       else this.slowFrames = Math.max(0, this.slowFrames - 1);
       if (this.slowFrames > 40 && s.autoScale > (this.lite ? 0.65 : 0.4)) {
@@ -343,7 +363,10 @@ class Engine {
     if (this.playing) {
       // Se alguém mudou o tempo (clique na régua, atalhos), o relógio recomeça dali.
       if (Math.abs(t - this.lastTime) > 1e-6) this.clock = { t0: t, wall0: performance.now() };
-      t = this.clock.t0 + (performance.now() - this.clock.wall0) / 1000;
+      // Se no quadro anterior o vídeo mestre ainda não estava rodando, o relógio não anda neste (espera por ele).
+      const nowT = performance.now();
+      if (this.lite && this.stalledPrev && this.heldMs < 2500 && this.lastTickMs) this.clock.wall0 += nowT - this.lastTickMs;
+      t = this.clock.t0 + (nowT - this.clock.wall0) / 1000;
       if (t >= total || (this.stopAt != null && t >= this.stopAt)) {
         t = Math.min(t, total, this.stopAt ?? total);
         this.pause();
@@ -380,8 +403,7 @@ class Engine {
       }
     }
     const nowMs = performance.now();
-    if (!this.lastTickMs || nowMs - this.lastTickMs > 250) this.lastTickMs = nowMs;
-    let hold = 0;
+    if (!this.lastTickMs) this.lastTickMs = nowMs;
     let stalled = false; // o vídeo mestre ainda não tem quadro: mantém na tela o último quadro bom
     let hasMaster = false; // já há um vídeo mestre do relógio neste quadro
 
@@ -441,23 +463,46 @@ class Engine {
       // tempo espera por ele em vez de seguir sozinha e forçar buscas que travam ainda mais.
       if (isMaster) {
         hasMaster = true;
-        const lag = target - el.currentTime;
-        if ((el.seeking || el.readyState < 2) && !el.error) {
-          hold = nowMs - this.lastTickMs;
-          stalled = true;
+        // O evento "playing" pode chegar atrasado: se o tempo do vídeo já está andando, ele está rodando.
+        let justLive = false;
+        if (!el.paused && !el.seeking && el.readyState >= 2 && entry.lastCT != null && el.currentTime !== entry.lastCT && !entry.live) {
+          entry.live = true;
+          justLive = true;
         }
-        if (!stalled && lag > 0.06 && lag < 1.2) hold = Math.min(nowMs - this.lastTickMs, lag * 1000) * 0.5;
+        entry.lastCT = el.currentTime;
+        if (((el.seeking || el.readyState < 2) && !el.error) || (!entry.live && !el.error)) {
+          // Ainda não está rodando (começando a tocar, buscando ou carregando): a linha do tempo espera.
+          stalled = true;
+        } else if (!c.curve) {
+          // O vídeo é o relógio: puxa o tempo da linha para onde o vídeo (e o som dele) realmente está.
+          // Assim imagem, som e linha do tempo nunca se separam, mesmo com o celular engasgando.
+          const tv = c.start + (el.currentTime - c.in) / speed;
+          const err = tv - t;
+          // Acabou de começar a rodar: o relógio encaixa de uma vez no ponto do vídeo.
+          if (justLive && Math.abs(err) <= 1) this.clock = { t0: tv, wall0: nowMs };
+          else          // Diferença grande = o vídeo ficou para trás de verdade: quem corrige é o sync() (busca), não o relógio.
+          if (Math.abs(err) > 0.004 && Math.abs(err) <= 0.5) this.clock.t0 += err * 0.15;
+        }
       }
     }
     // Espera no máximo ~2,5 s seguidos (se o vídeo nunca chega, a linha do tempo volta a andar).
-    this.heldMs = hold > 0 ? this.heldMs + hold : 0;
-    if (hold > 0 && this.heldMs < 2500 && this.playing) this.clock.wall0 += hold;
+    this.heldMs = stalled ? this.heldMs + (nowMs - this.lastTickMs) : 0;
     this.lastTickMs = nowMs;
     this.stalledPrev = stalled;
 
     for (const id of [...this.entries.keys()]) if (!near.has(id)) this.dispose(id);
     // Esperando o vídeo (troca de clipe, busca): não redesenha, para não piscar preto entre um quadro e outro.
     if (stalled && this.playing && this.heldMs < 2500) return;
+    if (this.lite && this.playing) {
+      // Só desenha quando chegou quadro novo do vídeo (ou, sem vídeo/sem suporte, no ritmo máximo).
+      const since = nowMs - this.lastDrawAt;
+      const minGap = (1000 / (this.maxFps || 30)) * 0.8;
+      const fresh = this.rvfc && hasMaster ? this.frameFlag || since > 120 : true;
+      if (!fresh || since < minGap) return;
+      this.frameFlag = false;
+      this.lastDrawAt = nowMs;
+    }
+    this.drewNow = true;
     this.draw(t, p, mediaById);
   }
 

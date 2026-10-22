@@ -31,7 +31,11 @@ export default function StageGestures({ w, h }) {
   const selection = useStore((s) => s.selection);
   const media = useStore((s) => s.media);
   const settings = useStore((s) => s.project.settings);
-  const now = useStore((s) => s.currentTime);
+  // O tempo só interessa (e só redesenha esta camada) quando o clipe selecionado tem keyframes: a caixa acompanha o movimento.
+  const now = useStore((s) => {
+    const c = s.selection.length === 1 ? s.project.clips.find((x) => x.id === s.selection[0]) : null;
+    return c?.keyframes ? s.currentTime : 0;
+  });
   useStore((s) => s.project);
   const activeKey = useStore((s) => activeVisualClips(s).map((a) => a.clip.id).join(','));
   const [guides, setGuides] = useState({ v: false, h: false });
