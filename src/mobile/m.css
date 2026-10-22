@@ -1501,3 +1501,128 @@ canvas {
   -webkit-user-select: none;
   user-select: none;
 }
+
+/* ---------- tela cheia do player ---------- */
+.mfs-btn {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 3;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  backdrop-filter: blur(4px);
+}
+.mstage.full {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  padding: 0;
+  background: #000;
+}
+.mstage.full .canvas-wrap {
+  border-radius: 0;
+  box-shadow: none;
+}
+.mfull {
+  position: absolute;
+  inset: 0;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.mfull-x,
+.mfull-bar {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.mfull.show .mfull-x,
+.mfull.show .mfull-bar {
+  opacity: 1;
+  pointer-events: auto;
+}
+.mfull-x {
+  position: absolute;
+  top: calc(var(--m-safe-t) + 10px);
+  right: 12px;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+.mfull-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 28px calc(14px + env(safe-area-inset-right, 0px)) calc(12px + var(--m-safe-b)) calc(14px + env(safe-area-inset-left, 0px));
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+  color: #fff;
+}
+.mfull-play {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--m-accent);
+  color: var(--m-accent-ink);
+}
+.mfull-time {
+  flex: none;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: #e5e7eb;
+}
+.mfull-bar input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: none;
+}
+.mfull-bar input[type='range']::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--m-accent) var(--p, 0%), rgba(255, 255, 255, 0.28) var(--p, 0%));
+}
+.mfull-bar input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: -7.5px;
+  border-radius: 50%;
+  background: #fff;
+}
+.mfull-bar input[type='range']::-moz-range-track {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.28);
+}
+.mfull-bar input[type='range']::-moz-range-progress {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--m-accent);
+}
+.mfull-bar input[type='range']::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+}

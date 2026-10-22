@@ -10,6 +10,7 @@ import StageGestures from './StageGestures';
 import { AddSheet, AnimSheet, TextEditSheet } from './TextSheets';
 import { AudioSheet, RecordSheet } from './AudioSheets';
 import Diag from './Diag';
+import FullControls, { enterFull, exitFull } from './FullControls';
 import { Sheet, Slider, Tool, askText, haptic } from './ui';
 import { pickFiles, importFiles } from './files';
 
@@ -111,7 +112,26 @@ function Stage() {
   const quality = useStore((s) => s.previewQuality);
   const autoScale = useStore((s) => s.autoScale);
   const empty = useStore((s) => s.project.clips.length === 0);
+  const theater = useStore((s) => s.theater);
   const aspect = settings.width / settings.height;
+
+  // Sair da tela cheia pelo sistema (gesto ou "voltar" do aparelho) também fecha o nosso modo.
+  useEffect(() => {
+    const onFs = () => !document.fullscreenElement && exitFull();
+    const onPop = () => {
+      // "Voltar" na tela cheia só sai dela. Este aviso chega antes do tratador do app (filhos montam primeiro).
+      if (!useStore.getState().theater) return;
+      window.__skipPop = true;
+      exitFull(true);
+    };
+    document.addEventListener('fullscreenchange', onFs);
+    window.addEventListener('popstate', onPop);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFs);
+      window.removeEventListener('popstate', onPop);
+      exitFull(true);
+    };
+  }, []);
 
   useEffect(() => {
     engine.attach(canvasRef.current);
@@ -125,32 +145,38 @@ function Stage() {
     const el = stageRef.current;
     const ro = new ResizeObserver(() => {
       const r = el.getBoundingClientRect();
-      const aw = Math.max(10, r.width - 16);
-      const ah = Math.max(10, r.height - 8);
+      const aw = Math.max(10, r.width - (theater ? 0 : 16));
+      const ah = Math.max(10, r.height - (theater ? 0 : 8));
       const w = Math.min(aw, ah * aspect);
       setSize({ w: Math.round(w), h: Math.round(w / aspect) });
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [aspect]);
+  }, [aspect, theater]);
 
   useEffect(() => {
     const c = canvasRef.current;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const cap = quality === 'high' ? Infinity : quality === 'low' ? 640 : quality === 'medium' ? 960 : MAX_CANVAS_W;
+    const cap = quality === 'high' ? Infinity : quality === 'low' ? 640 : quality === 'medium' ? 960 : theater ? 1280 : MAX_CANVAS_W;
     let k = Math.min(dpr, cap / Math.max(1, size.w));
     if (quality === 'auto') k *= autoScale;
     c.width = Math.max(2, Math.round(size.w * k));
     c.height = Math.max(2, Math.round(size.h * k));
     engine.requestDraw();
-  }, [size, quality, autoScale]);
+  }, [size, quality, autoScale, theater]);
 
   return (
-    <section className="mstage" ref={stageRef}>
+    <section className={'mstage' + (theater ? ' full' : '')} ref={stageRef}>
       <div className="canvas-wrap" style={{ width: size.w, height: size.h }}>
         <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} />
-        {!empty && <StageGestures w={size.w} h={size.h} />}
+        {!empty && !theater && <StageGestures w={size.w} h={size.h} />}
+        {!empty && !theater && (
+          <button className="mfs-btn" onPointerDown={(e) => e.stopPropagation()} onClick={() => enterFull(stageRef.current, aspect)} aria-label="Tela cheia">
+            <Icon name="fullscreen" size={18} strokeWidth={2.2} />
+          </button>
+        )}
       </div>
+      {theater && <FullControls />}
     </section>
   );
 }

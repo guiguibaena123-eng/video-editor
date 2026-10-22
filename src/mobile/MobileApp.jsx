@@ -16,7 +16,12 @@ export default function MobileApp() {
   useEffect(() => {
     if (view === 'editor') {
       history.pushState({ editor: true }, '');
-      const onPop = () => goHome();
+      const onPop = () => {
+        // Sair da tela cheia desfaz o histórico dela: isso não é "voltar para os projetos".
+        if (window.__skipPop) return void (window.__skipPop = false);
+        if (useStore.getState().theater) return;
+        goHome();
+      };
       window.addEventListener('popstate', onPop);
       return () => window.removeEventListener('popstate', onPop);
     }
