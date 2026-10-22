@@ -118,3 +118,5 @@ Todas as etapas planejadas estão prontas. Ideias para depois: mais adesivos des
 `npm run dist` → `release\Video Editor Setup 0.1.0.exe`. Grafo do projeto: `graphify-out\graph.html` (atualizado a cada etapa com `scripts\graph`).
 - No `drawbox` do FFmpeg altura 0 significa "altura toda": sem barra, a caixa de 1 px é jogada para fora do quadro.
 - Nem todo canal de efeito é animado quadro a quadro na exportação: `shift`/`tom` (sendcmd) e `barras`/`íris` são arrays por quadro, mas granulado/pixelização/brilho (glow) são um valor único para o trecho inteiro — rampas de entrada/saída só valem nos canais animados, senão prévia e exportação descasam.
+
+*Celular — começo do vídeo ao reabrir o projeto (22/10/2026).* Ao reabrir um projeto salvo e dar play em menos de 1 s, a tira de quadros ainda não estava pronta e o começo travava (80–100 ms com a CPU 4× mais lenta). O preparo da tira agora começa 120 ms depois de o vídeo carregar (antes 450 ms) e tenta de novo a cada 150 ms (antes 500). Resultado no mesmo teste: pior intervalo 102 ms → 70 ms; CPU normal: 51 ms.

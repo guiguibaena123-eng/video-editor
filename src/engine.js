@@ -553,9 +553,9 @@ class Engine {
       await this.captureStrip(entry, c, target, 'idle');
       if (this.playing || Math.abs(useStore.getState().currentTime - t) > 1e-4) return;
     }
-    if (waiting && tries < 12) {
+    if (waiting && tries < 40) {
       clearTimeout(this.idleT);
-      this.idleT = setTimeout(() => this.captureIdle(tries + 1), 500);
+      this.idleT = setTimeout(() => this.captureIdle(tries + 1), 150);
     }
   }
 
@@ -652,7 +652,7 @@ class Engine {
           this.idleT = setTimeout(() => {
             this.idlePending = false;
             this.captureIdle();
-          }, 450);
+          }, 120);
         }
       }
     } else this.scrubbing = false;
