@@ -1,4 +1,4 @@
-import { Engine } from './engine';
+import { Engine, IOS_LIKE } from './engine';
 import { useStore, clipEnd, projectDuration, mediaUrl } from './store';
 import { sourceAt, speedAt } from './speed';
 import { valueAt, isAnimated } from './keyframes';
@@ -128,6 +128,15 @@ export class LiteEngine extends Engine {
   setVolume(el, gainNode, vol) {
     super.setVolume(el, gainNode, vol);
     if (gainNode && this.playing && el.muted && vol > 0.001) el.muted = false;
+  }
+
+  // Quem precisa do WebAudio (volume > 100 %, ou fade/volume no iPhone) é ligado a ele ANTES de tocar: ligar um elemento
+  // que já está tocando corta o som por um instante.
+  needsGain(c, p) {
+    if (c.volume > 1 || c.keyframes?.volume?.length) return true;
+    if (!IOS_LIKE) return false;
+    const a = effectiveAudio(p, c);
+    return (c.volume != null && c.volume < 1) || a.fadeIn > 0.01 || a.fadeOut > 0.01 || !!c.keyframes?.volume;
   }
 
   makeAudio(e, m) {
@@ -309,6 +318,7 @@ export class LiteEngine extends Engine {
     this.lastWriteAt = 0;
     this.scrubbing = false;
     this.unlockAudio();
+    if (this.audioCtx?.state === 'suspended') this.audioCtx.resume();
     this.playing = true;
     useStore.setState({ playing: true, currentTime: start });
     // O navegador só deixa o som começar a partir de um toque: roda o primeiro passo já, dentro do toque.
@@ -431,6 +441,7 @@ export class LiteEngine extends Engine {
         if (lead < this.nextLead && !this.scrubbing) {
           if (e.fp) e.fp.step(sourceAt(c, 0) * 1e6, 'idle');
           if (e.el) {
+            if (this.needsGain(c, p)) this.connect(e, 2);
             if (e.el.readyState >= 1 && !e.el.seeking && Math.abs(e.el.currentTime - c.in) > 0.05) {
               e.el.currentTime = c.in;
               e.el.__heat = null; // mexi na posição de propósito: não é o navegador ignorando a taxa 0
@@ -468,7 +479,7 @@ export class LiteEngine extends Engine {
       if (!el) continue;
       const silent = tr.muted || tr.hidden || c.audioDetached || this.muteAll || !m.hasAudio;
       const vol = silent ? 0 : valueAt(c, 'volume', local) * fadeGain(effectiveAudio(p, c), local, end - c.start) * duckGainAt(p, s.cache, mediaById, c, local);
-      this.connect(e, vol);
+      this.connect(e, this.needsGain(c, p) ? 2 : vol);
       this.setVolume(el, e.gain, vol);
       if (this.playing) {
         this.driveSound(e, c, el, t, target, speed, keepPitch, vol > 0.001, now);
@@ -557,9 +568,14 @@ export class LiteEngine extends Engine {
     // Quente (taxa 0) até agora: passa a andar, um pouco mais rápido por um instante (o som leva ~50 ms para pegar o ritmo).
     if (el.playbackRate === 0) e.boostUntil = now + 350;
     let rate = base;
-    if (now < (e.boostUntil || 0)) rate *= 1.1;
-    // correção suave (no máximo ±10 %): taxas muito diferentes de 1 fazem o som "chiar" nos celulares
-    if (el.playbackRate > 0 && Math.abs(drift) > 0.02) rate *= 1 - Math.max(-0.1, Math.min(0.1, drift * 2));
+    if (now < (e.boostUntil || 0)) rate *= 1.06;
+    // Mexer na taxa de um som que toca faz o navegador recalcular o áudio (estalo/chiado em celulares): só se corrige
+    // quando a diferença já é audível para a imagem (> 40 ms), de leve (no máximo ±4 %), e volta a 1× logo que fecha.
+    if (el.playbackRate > 0 && !(now < (e.boostUntil || 0))) {
+      const ad = Math.abs(drift);
+      const cur = el.playbackRate / base;
+      if (ad > 0.04 || (Math.abs(cur - 1) > 0.002 && ad > 0.015)) rate *= 1 - Math.max(-0.04, Math.min(0.04, drift * 1.2));
+    }
     if (Math.abs(el.playbackRate - rate) > 5e-4) el.playbackRate = rate;
   }
 
