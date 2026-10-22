@@ -68,7 +68,10 @@ async function run(path, hasAudio, onProgress, duration, onThumbs) {
     });
     if (!d || Math.abs(d - duration) > 0.6) throw new Error(`a cópia leve ficou com duração diferente (${d?.toFixed?.(2)} s contra ${duration.toFixed(2)} s)`);
   }
-  if (thumbs) onThumbs?.(thumbs);
+  if (thumbs) {
+    onThumbs?.(thumbs);
+    dbPut('files', key + '-t', { data: thumbs }).catch(() => {}); // reabrir o projeto: miniaturas na hora
+  }
   await dbPut('files', key, { blob: out, name: 'previa.mp4', type: 'video/mp4', size: out.size }).catch(() => {});
   return proxyPath;
 }

@@ -145,8 +145,20 @@ async function probe(path) {
 
 const THUMB_H = 72;
 
+// Miniaturas e onda do som ficam guardadas no aparelho ("-t" e "-w"): ao reabrir o projeto aparecem na hora.
+async function cached(path, suffix, make) {
+  const key = webId(path) + suffix;
+  try {
+    const rec = await dbGet('files', key);
+    if (rec?.data) return rec.data;
+  } catch {}
+  const data = await make();
+  dbPut('files', key, { data }).catch(() => {});
+  return data;
+}
+
 async function thumbnails(path, duration, type) {
-  return background(() => makeThumbnails(path, duration, type));
+  return cached(path, '-t', () => background(() => makeThumbnails(path, duration, type)));
 }
 
 async function makeThumbnails(path, duration, type) {
@@ -187,7 +199,7 @@ async function makeThumbnails(path, duration, type) {
 }
 
 async function waveform(path, duration = 0) {
-  return background(() => makeWaveform(path, duration));
+  return cached(path, '-w', () => background(() => makeWaveform(path, duration)));
 }
 
 async function makeWaveform(path, duration) {
@@ -237,7 +249,7 @@ async function releaseMedia(data) {
 async function collectGarbage() {
   const used = new Set();
   for (const [, rec] of await dbAll('projects')) for (const m of rec.data?.media || []) if (isWebPath(m.path)) used.add(webId(m.path));
-  for (const id of await dbKeys('files')) if (!used.has(String(id).replace(/-p$/, ''))) await dbDelete('files', id); // "-p" = prévia leve do arquivo
+  for (const id of await dbKeys('files')) if (!used.has(String(id).replace(/(-p)?(-[tw])?$/, ''))) await dbDelete('files', id); // "-p" = prévia leve, "-t" = miniaturas, "-w" = onda do som
 }
 
 const libId = (file) => String(file).replace(/^lib:/, '');
