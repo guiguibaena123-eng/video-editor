@@ -1,0 +1,8 @@
+# Saídas geradas (instalador, build) e dependências: não fazem parte do código do projeto.
+release/
+dist/
+node_modules/
+graphify-out/
+build/icon.png
+build/icon.ico
+scripts/graph/

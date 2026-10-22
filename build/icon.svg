@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="116" fill="#FFC72C"/>
+  <g fill="#111111" stroke="#111111" stroke-linejoin="round">
+    <!-- alça superior -->
+    <rect x="132" y="128" width="132" height="40" rx="14" stroke-width="0"/>
+    <!-- corpo -->
+    <rect x="82" y="164" width="262" height="196" rx="36" stroke-width="0"/>
+    <!-- lente frontal -->
+    <path d="M350 232 L428 186 Q438 180 438 192 L438 332 Q438 344 428 338 L350 292 Z" stroke-width="16"/>
+  </g>
+  <!-- detalhes amarelos -->
+  <circle cx="134" cy="214" r="16" fill="#FFC72C"/>
+  <rect x="166" y="304" width="132" height="18" rx="9" fill="#FFC72C"/>
+</svg>
