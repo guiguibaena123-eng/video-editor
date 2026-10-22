@@ -9,7 +9,7 @@ import MTimeline from './Timeline';
 import { Sheet, Slider, Tool, askText, haptic } from './ui';
 import { pickFiles, importFiles } from './files';
 
-const MAX_CANVAS_W = 1280;
+const MAX_CANVAS_W = 720; // pixels reais do player no celular: o suficiente para uma tela pequena e bem mais leve
 
 export default function MEditor() {
   const [sheet, setSheet] = useState(null);
@@ -140,17 +140,31 @@ function Stage() {
 }
 
 function Time() {
-  const t = useStore((s) => s.currentTime);
-  const total = useStore((s) => projectDuration(s.project));
+  const cur = useRef(null);
+  const tot = useRef(null);
   const fmt = (v) => {
     const m = Math.floor(v / 60);
-    const s = v - m * 60;
-    return `${m}:${s.toFixed(1).padStart(4, '0')}`;
+    const sec = v - m * 60;
+    return `${m}:${sec.toFixed(1).padStart(4, '0')}`;
   };
+  // Atualiza o texto direto no elemento (só quando o décimo de segundo muda): sem redesenhar o React a cada quadro.
+  useEffect(() => {
+    let last = '';
+    let lastTotal = '';
+    const apply = () => {
+      const s = useStore.getState();
+      const a = fmt(s.currentTime);
+      const b = fmt(projectDuration(s.project));
+      if (a !== last && cur.current) cur.current.textContent = last = a;
+      if (b !== lastTotal && tot.current) tot.current.textContent = lastTotal = ' / ' + b;
+    };
+    apply();
+    return useStore.subscribe(apply);
+  }, []);
   return (
     <div className="mtime">
-      <b>{fmt(t)}</b>
-      <span> / {fmt(total)}</span>
+      <b ref={cur} />
+      <span ref={tot} />
     </div>
   );
 }

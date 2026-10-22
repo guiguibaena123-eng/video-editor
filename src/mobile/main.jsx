@@ -9,6 +9,8 @@ import './m.css';
 
 installWebApi();
 useStore.setState({ zoom: 90 });
+engine.lite = true; // perfil leve do motor (celular)
+engine.maxFps = 30;
 
 // Acesso para testes automatizados, só no modo de desenvolvimento.
 if (import.meta.env.DEV) window.__ve = { useStore, ops, engine };

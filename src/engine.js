@@ -23,6 +23,15 @@ class Engine {
   lastTime = -1;
   raf = 0;
 
+  // Perfil leve (celular): desenha no máximo maxFps quadros por segundo, guarda o quadro de apoio só de vez em
+  // quando, abre poucos vídeos ao mesmo tempo e tolera mais atraso antes de refazer uma busca.
+  lite = false;
+  maxFps = 0;
+  lastFrameAt = 0;
+  snapTick = 0;
+  lastTickMs = 0;
+  heldMs = 0;
+
   drawUntil = 0; // o player só redesenha parado enquanto algo mudou (poupa CPU/GPU/bateria)
   slowFrames = 0;
   lastLoop = 0;
@@ -92,7 +101,7 @@ class Engine {
       if (el.paused) {
         if (Math.abs(el.currentTime - target) > 0.05) el.currentTime = target;
         el.play().catch(() => {});
-      } else if (Math.abs(el.currentTime - target) > 0.3) {
+      } else if (!(this.lite && el.seeking) && Math.abs(el.currentTime - target) > (this.lite ? 0.5 : 0.3)) {
         el.currentTime = target;
       }
     } else {
@@ -282,6 +291,8 @@ class Engine {
   loop = () => {
     this.raf = requestAnimationFrame(this.loop);
     const now = performance.now();
+    if (this.playing && this.maxFps && now - this.lastFrameAt < 1000 / this.maxFps - 3) return;
+    this.lastFrameAt = now;
     try {
       this.frame();
     } catch (err) {
@@ -345,13 +356,17 @@ class Engine {
     const mediaById = this.mediaMap;
     const trackById = this.trackMap;
     const near = new Set();
+    const nowMs = performance.now();
+    if (!this.lastTickMs || nowMs - this.lastTickMs > 250) this.lastTickMs = nowMs;
+    let hold = 0;
+    let hasMaster = false; // já há um vídeo mestre do relógio neste quadro
 
     for (const c of p.clips) {
       const m = mediaById.get(c.mediaId);
       const tr = trackById.get(c.trackId);
       if (!m || !tr || m.missing || m.type === 'image') continue;
       const end = clipEnd(c);
-      if (t < c.start - 3 || t > end + 1) continue;
+      if (t < c.start - (this.lite ? 1.2 : 3) || t > end + 1) continue;
       near.add(c.id);
       const entry = this.getEntry(c, m);
       const el = entry.el;
@@ -387,7 +402,19 @@ class Engine {
       const target = sourceAt(c, t - c.start);
       this.sync(el, target, speed, keepPitch);
       if (entry.ael) this.sync(entry.ael, target, speed, keepPitch);
+      // Perfil leve: o vídeo manda no relógio. Se ele atrasa (carregando, busca, celular lento), a linha do
+      // tempo espera por ele em vez de seguir sozinha e forçar buscas que travam ainda mais.
+      if (this.lite && this.playing && !hasMaster && !tr.hidden) {
+        hasMaster = true;
+        const lag = target - el.currentTime;
+        if ((el.seeking || el.readyState < 3) && !el.error) hold = nowMs - this.lastTickMs;
+        else if (lag > 0.06 && lag < 1.2) hold = Math.min(nowMs - this.lastTickMs, lag * 1000) * 0.5;
+      }
     }
+    // Espera no máximo ~2,5 s seguidos (se o vídeo nunca chega, a linha do tempo volta a andar).
+    this.heldMs = hold > 0 ? this.heldMs + hold : 0;
+    if (hold > 0 && this.heldMs < 2500 && this.playing) this.clock.wall0 += hold;
+    this.lastTickMs = nowMs;
 
     for (const id of [...this.entries.keys()]) if (!near.has(id)) this.dispose(id);
     this.draw(t, p, mediaById);
@@ -424,7 +451,7 @@ class Engine {
           // por um instante; desenha o último quadro guardado para o player não piscar preto.
           if (entry.el.readyState >= 2) {
             src = entry.el;
-            this.keepFrame(entry);
+            if (!this.lite || !this.playing || ++this.snapTick % 8 === 0) this.keepFrame(entry);
           } else if (entry.snap) src = entry.snap;
           else continue;
         }

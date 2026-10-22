@@ -415,56 +415,64 @@ function Ruler({ zoom, W, total, fps }) {
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
+    // Canvas com 3 telas de largura: durante a reprodução ele só desliza (transform) e é redesenhado
+    // quando o cursor chega perto da borda dele. Antes a régua inteira era redesenhada a cada quadro.
+    const CW = W * 3;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    c.width = Math.round(W * dpr);
+    c.width = Math.round(CW * dpr);
     c.height = Math.round(RULER_H * dpr);
+    c.style.width = CW + 'px';
     const gx = c.getContext('2d');
     const step = STEPS.find((s) => s * zoom >= 64) || STEPS[STEPS.length - 1];
     const css = getComputedStyle(document.documentElement);
     const tick = css.getPropertyValue('--m-text-3').trim() || '#777';
     const txt = css.getPropertyValue('--m-text-2').trim() || '#aaa';
-    const draw = (t) => {
+    let base = null; // tempo que fica no centro do canvas largo
+    const paint = (t) => {
+      base = t;
       gx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      gx.clearRect(0, 0, W, RULER_H);
-      const x0 = W / 2 - t * zoom;
-      const from = Math.max(0, Math.floor((t - W / 2 / zoom) / step) * step);
-      const to = t + W / 2 / zoom + step;
+      gx.clearRect(0, 0, CW, RULER_H);
+      const x0 = CW / 2 - t * zoom;
+      const from = Math.max(0, Math.floor((t - CW / 2 / zoom) / step) * step);
+      const to = t + CW / 2 / zoom + step;
       gx.font = '500 10.5px system-ui, sans-serif';
       gx.textBaseline = 'top';
       gx.textAlign = 'left';
+      gx.strokeStyle = tick;
+      gx.beginPath();
       for (let v = from; v <= to; v += step) {
         const x = Math.round(x0 + v * zoom) + 0.5;
-        gx.strokeStyle = tick;
-        gx.beginPath();
         gx.moveTo(x, RULER_H - 9);
         gx.lineTo(x, RULER_H);
-        gx.stroke();
-        // marca do meio
         const xm = Math.round(x0 + (v + step / 2) * zoom) + 0.5;
-        gx.beginPath();
         gx.moveTo(xm, RULER_H - 5);
         gx.lineTo(xm, RULER_H);
-        gx.stroke();
-        gx.fillStyle = txt;
-        const m = Math.floor(v / 60);
-        const s = v - m * 60;
-        gx.fillText(step < 1 ? `${m}:${s.toFixed(1).padStart(4, '0')}` : `${m}:${String(Math.round(s)).padStart(2, '0')}`, x + 4, 3);
       }
-      // fim do projeto
+      gx.stroke();
+      gx.fillStyle = txt;
+      for (let v = from; v <= to; v += step) {
+        const x = Math.round(x0 + v * zoom) + 0.5;
+        const m = Math.floor(v / 60);
+        const sec = v - m * 60;
+        gx.fillText(step < 1 ? `${m}:${sec.toFixed(1).padStart(4, '0')}` : `${m}:${String(Math.round(sec)).padStart(2, '0')}`, x + 4, 3);
+      }
       if (total > 0) {
         const xe = x0 + total * zoom;
-        if (xe >= 0 && xe <= W) {
-          gx.fillStyle = 'rgba(255,255,255,0.14)';
-          gx.fillRect(xe, 0, 1.5, RULER_H);
-        }
+        gx.fillStyle = 'rgba(255,255,255,0.14)';
+        gx.fillRect(xe, 0, 1.5, RULER_H);
       }
     };
-    draw(useStore.getState().currentTime);
+    const place = (t) => {
+      if (base === null || Math.abs(t - base) * zoom > W * 0.9) paint(t);
+      // O centro do canvas largo (CW/2) está em "base"; o cursor (W/2 na tela) está em "t".
+      c.style.transform = `translate3d(${(W / 2 - CW / 2 - (t - base) * zoom).toFixed(2)}px,0,0)`;
+    };
+    place(useStore.getState().currentTime);
     return useStore.subscribe((s, prev) => {
-      if (s.currentTime !== prev.currentTime) draw(s.currentTime);
+      if (s.currentTime !== prev.currentTime) place(s.currentTime);
     });
   }, [zoom, W, total, fps]);
-  return <canvas ref={ref} className="mtl-ruler" style={{ width: W, height: RULER_H }} />;
+  return <canvas ref={ref} className="mtl-ruler" style={{ height: RULER_H }} />;
 }
 
 // ---------- clipe ----------
