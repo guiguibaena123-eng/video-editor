@@ -565,7 +565,25 @@ function setCache(id, patch) {
 
 export function loadMediaCache(media) {
   if (media.missing) return;
-  const wantProxy = media.type === 'video' && Math.max(media.width, media.height) > (window.api.proxyMinSide ?? PROXY_MIN_SIDE);
+  const big = media.type === 'video' && Math.max(media.width, media.height) > (window.api.proxyMinSide ?? PROXY_MIN_SIDE);
+  // Celular com decodificação própria: vídeo H.264 de até Full HD com grupos de quadros curtos toca direto do original
+  // (sem esperar a cópia leve). O resto (4K, outro codec, grupos longos) continua com a cópia leve.
+  if (big && window.api.playsDirect) {
+    setCache(media.id, { deciding: true }); // o player espera esta decisão antes de abrir o original
+    window.api.playsDirect(media.path).then(
+      (ok) => {
+        setCache(media.id, { deciding: false });
+        startMediaCache(media, !ok);
+      },
+      () => {
+        setCache(media.id, { deciding: false });
+        startMediaCache(media, true);
+      },
+    );
+  } else startMediaCache(media, big);
+}
+
+function startMediaCache(media, wantProxy) {
   const startThumbs = (path) => {
     if (media.type === 'audio') return;
     window.api

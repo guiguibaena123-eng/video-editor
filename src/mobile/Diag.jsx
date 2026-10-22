@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore, clipEnd } from '../store';
 import { engine } from '../engine';
+import { decoderMode } from '../web/frames';
 
 // Painel de diagnóstico do player (toque 5 vezes no contador de tempo). Mostra o que acontece de verdade no
 // aparelho: se o navegador recusou tocar, quanto o som/imagem estão fora da linha do tempo, quadros perdidos...
 export default function Diag({ onClose }) {
   const [text, setText] = useState('');
-  const prev = useRef({ t: performance.now(), rvfc: 0, draws: 0, ticks: 0 });
+  const prev = useRef({ t: performance.now(), rvfc: 0, draws: 0, ticks: 0, dec: 0 });
   const draws = useRef(0);
 
   useEffect(() => {
@@ -29,23 +30,28 @@ export default function Diag({ onClose }) {
         const e = engine.entries.get(c.id);
         const m = s.media.find((x) => x.id === c.mediaId);
         if (!e || !m) continue;
-        const q = e.el.getVideoPlaybackQuality?.();
+        const q = (e.vel || e.el)?.getVideoPlaybackQuality?.();
         const pc = s.cache[m.id];
-        const drift = Math.round((e.el.currentTime - (c.in + (t - c.start) * (c.speed || 1))) * 1000);
-        rows.push(`${m.type[0]} ${m.name.slice(0, 14)} desvio ${drift} ms · ${e.el.paused ? 'PARADO' : 'tocando'}${e.el.seeking ? ' buscando' : ''} · estado ${e.el.readyState}${e.live ? ' · live' : ''}${e.gain ? ' · WebAudio' : ''}${/-p\/previa\.mp4$/.test(e.srcPath || '') ? ' · PRÉVIA LEVE' : ' · original'}${q ? ` · perdidos ${q.droppedVideoFrames}/${q.totalVideoFrames}` : ''}${pc?.proxyState ? ` · cópia leve: ${pc.proxyState}${pc.proxyError ? ' (' + pc.proxyError.slice(0, 60) + ')' : ''}` : ''}`);
+        const media = e.el || e.vel;
+        const drift = media ? Math.round((media.currentTime - (c.in + (t - c.start) * (c.speed || 1))) * 1000) : 0;
+        const el = e.el;
+        const src = /-p\/previa\.mp4$/.test(e.srcPath || '') ? ' · PRÉVIA LEVE' : ' · original';
+        const vis = e.fp ? ` · imagem: quadros${e.fp.failed ? ' FALHOU ' + String(e.fp.failed.message || e.fp.failed).slice(0, 40) : ''} (${decoderMode(e.fp.src)}, ${e.fp.stats.decoded} quadros, ${e.fp.stats.resets} buscas${e.fp.src.reorder ? ', B-frames' : ''}${e.fp.src.rot ? ', girado ' + e.fp.src.rot + '°' : ''})` : e.vel ? ' · imagem: <video> mudo' : m.type === 'video' ? ' · imagem: abrindo' : '';
+        rows.push(`${m.type[0]} ${m.name.slice(0, 14)}${media ? ` desvio ${drift} ms · ${el ? (el.paused ? 'som PARADO' : 'som tocando') : ''}${el?.seeking ? ' buscando' : ''} · estado ${el?.readyState ?? '-'}${e.live ? ' · live' : ''}${e.gain ? ' · WebAudio' : ''}` : ''}${src}${vis}${q ? ` · perdidos ${q.droppedVideoFrames}/${q.totalVideoFrames}` : ''}${pc?.proxyState ? ` · cópia leve: ${pc.proxyState}${pc.proxyError ? ' (' + pc.proxyError.slice(0, 60) + ')' : ''}` : ''}`);
       }
+      const decNow = [...engine.entries.values()].reduce((a, e) => a + (e.fp ? e.fp.stats.decoded : 0), 0);
       const ua = navigator.userAgent.slice(12, 90);
       setText(
         [
           `${engine.playing ? 'TOCANDO' : 'parado'} · t=${t.toFixed(2)} · ${engine.lite ? 'leve' : 'completo'}`,
-          `quadros do vídeo/s ${((engine.stats.rvfc - prev.current.rvfc) / dt).toFixed(0)} · desenhos/s ${((draws.current - prev.current.draws) / dt).toFixed(0)} · tempo/s ${((ticks - prev.current.ticks) / dt).toFixed(0)}`,
+          `quadros do vídeo/s ${((engine.stats.rvfc - prev.current.rvfc + decNow - prev.current.dec) / dt).toFixed(0)} · desenhos/s ${((draws.current - prev.current.draws) / dt).toFixed(0)} · tempo/s ${((ticks - prev.current.ticks) / dt).toFixed(0)}`,
           `play() chamado ${engine.stats.plays}x · RECUSADO ${engine.stats.rejects}x ${engine.stats.lastErr}`,
-          `qualidade ${s.previewQuality} · escala ${s.autoScale}`,
+          `qualidade ${s.previewQuality} · escala ${s.autoScale}${engine.audioLead != null ? ` · atraso do som ${Math.round(engine.audioLead * 1000)} ms` : ''}`,
           ...rows,
           ua,
         ].join('\n'),
       );
-      prev.current = { t: now, rvfc: engine.stats.rvfc, draws: draws.current, ticks };
+      prev.current = { t: now, rvfc: engine.stats.rvfc, draws: draws.current, ticks, dec: decNow };
     }, 500);
     return () => {
       clearInterval(id);

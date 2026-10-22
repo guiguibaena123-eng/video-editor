@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore, projectDuration } from '../store';
 import { engine } from '../engine';
+import { onTime } from './timebus';
 import { seek } from '../ops';
 import { Icon } from '../icons';
 
@@ -55,18 +56,16 @@ export default function FullControls() {
 
   // Barra e contador acompanham o tempo direto no elemento (sem redesenhar o React a cada quadro).
   useEffect(() => {
-    const apply = () => {
-      const s = useStore.getState();
-      const total = projectDuration(s.project);
+    const apply = (t) => {
+      const total = projectDuration(useStore.getState().project);
       if (bar.current) {
         bar.current.max = String(total || 1);
-        if (!bar.current.dataset.drag) bar.current.value = String(s.currentTime);
-        bar.current.style.setProperty('--p', total ? (s.currentTime / total) * 100 + '%' : '0%');
+        if (!bar.current.dataset.drag) bar.current.value = String(t);
+        bar.current.style.setProperty('--p', total ? (t / total) * 100 + '%' : '0%');
       }
-      if (cur.current) cur.current.textContent = `${fmt(s.currentTime)} / ${fmt(total)}`;
+      if (cur.current) cur.current.textContent = `${fmt(t)} / ${fmt(total)}`;
     };
-    apply();
-    return useStore.subscribe(apply);
+    return onTime(apply);
   }, []);
 
   const stop = (e) => e.stopPropagation();

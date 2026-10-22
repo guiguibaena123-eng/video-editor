@@ -421,8 +421,8 @@ class ColorGL {
   render(src, lut, { vignette = 0, sharpen = 0, chroma = null, fx = null, time = 0, optics = null } = {}) {
     if (!this.init()) return src;
     const gl = this.gl;
-    const sw = src.videoWidth || src.naturalWidth || src.width;
-    const sh = src.videoHeight || src.naturalHeight || src.height;
+    const sw = src.videoWidth || src.naturalWidth || src.displayWidth || src.width;
+    const sh = src.videoHeight || src.naturalHeight || src.displayHeight || src.height;
     if (!sw || !sh) return src;
     const k = Math.min(1, 1920 / Math.max(sw, sh));
     const w = Math.max(1, Math.round(sw * k));

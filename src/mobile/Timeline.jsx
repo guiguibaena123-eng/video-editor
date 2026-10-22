@@ -1,6 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore, clipDur, clipEnd, packMain, projectDuration } from '../store';
 import { engine } from '../engine';
+import { onTime, timeNow } from './timebus';
 import { sourceAt, effSpeed } from '../speed';
 import { shiftKeyframes } from '../keyframes';
 import { insertionOrder, placeClip, seek } from '../ops';
@@ -51,10 +52,7 @@ export default function MTimeline({ onAdd }) {
     const apply = (t) => {
       if (contentRef.current) contentRef.current.style.transform = `translate3d(${(W / 2 - t * zoom).toFixed(2)}px,0,0)`;
     };
-    apply(useStore.getState().currentTime);
-    return useStore.subscribe((s, prev) => {
-      if (s.currentTime !== prev.currentTime) apply(s.currentTime);
-    });
+    return onTime(apply);
   }, [W, zoom]);
 
   const stopInertia = () => {
@@ -96,7 +94,7 @@ export default function MTimeline({ onAdd }) {
     s.select([clipId]);
     const st = g.current;
     st.mode = 'move';
-    st.move = { id: clipId, orig: clip.start, dur: clipDur(clip), t0: s.currentTime, targets: targetsFor(new Set([clipId])), snapped: null };
+    st.move = { id: clipId, orig: clip.start, dur: clipDur(clip), t0: timeNow(), targets: targetsFor(new Set([clipId])), snapped: null };
     s.gestureStart();
     setLifted(clipId);
     haptic(16);
@@ -111,7 +109,7 @@ export default function MTimeline({ onAdd }) {
       else if (x > r.right - edge) v = 1 - clamp((r.right - x) / edge, 0, 1);
       if (v) {
         const z = useStore.getState().zoom;
-        seek(clamp(useStore.getState().currentTime + (v * 340 * 0.016) / z, 0, Math.max(total, 0) + 30));
+        seek(clamp(timeNow() + (v * 340 * 0.016) / z, 0, Math.max(total, 0) + 30));
         applyMove(x);
       }
       g.current.raf = requestAnimationFrame(loop);
@@ -126,7 +124,7 @@ export default function MTimeline({ onAdd }) {
     if (!m) return;
     const s = useStore.getState();
     const z = s.zoom;
-    let ns = Math.max(0, m.orig + (x - st.sx) / z + (s.currentTime - m.t0));
+    let ns = Math.max(0, m.orig + (x - st.sx) / z + (timeNow() - m.t0));
     let at = null;
     if (s.project.settings.snap) {
       const th = SNAP_PX / z;
@@ -193,7 +191,7 @@ export default function MTimeline({ onAdd }) {
     st.sx = e.clientX;
     st.sy = e.clientY;
     st.lastX = e.clientX;
-    st.t0 = useStore.getState().currentTime;
+    st.t0 = timeNow();
     st.clipId = clipId;
     st.samples = [[performance.now(), e.clientX]];
     clearTimeout(st.lp);
@@ -265,7 +263,7 @@ export default function MTimeline({ onAdd }) {
           const dtm = Math.min(40, now - last);
           last = now;
           v *= Math.exp(-dtm / 380);
-          const t = useStore.getState().currentTime - (v * dtm) / z;
+          const t = timeNow() - (v * dtm) / z;
           const tt = clamp(t, 0, Math.max(total, 0));
           seek(tt);
           if (Math.abs(v) > 0.03 && tt === t) inertia.current = requestAnimationFrame(step);
@@ -300,7 +298,7 @@ export default function MTimeline({ onAdd }) {
     const end0 = clipEnd(clip);
     const prevEnd = magnetMain ? 0 : Math.max(0, ...others.filter((c) => clipEnd(c) <= clip.start + 1e-3).map(clipEnd));
     const nextStart = magnetMain ? Infinity : Math.min(Infinity, ...others.filter((c) => c.start >= end0 - 1e-3).map((c) => c.start));
-    const targets = [...targetsFor(new Set([clip.id])), s.currentTime];
+    const targets = [...targetsFor(new Set([clip.id])), timeNow()];
     const z = s.zoom;
     const sx = e.clientX;
     let snapped = null;
@@ -467,10 +465,7 @@ function Ruler({ zoom, W, total, fps }) {
       // O centro do canvas largo (CW/2) está em "base"; o cursor (W/2 na tela) está em "t".
       c.style.transform = `translate3d(${(W / 2 - CW / 2 - (t - base) * zoom).toFixed(2)}px,0,0)`;
     };
-    place(useStore.getState().currentTime);
-    return useStore.subscribe((s, prev) => {
-      if (s.currentTime !== prev.currentTime) place(s.currentTime);
-    });
+    return onTime(place);
   }, [zoom, W, total, fps]);
   return <canvas ref={ref} className="mtl-ruler" style={{ height: RULER_H }} />;
 }
@@ -485,7 +480,7 @@ const MClip = memo(function MClip({ clip, media, thumbs, wave, lane, zoom, selec
     <div className={cls} data-clip={clip.id} style={{ left: clip.start * zoom, top: lane.y, width: w, height: lane.h }}>
       {kind === 'video' && media && <Filmstrip clip={clip} media={media} thumbs={thumbs} width={w} height={lane.h} zoom={zoom} />}
       {kind === 'audio' && wave && <Waveform clip={clip} wave={wave} width={w} height={lane.h} />}
-      {(kind === 'text' || kind === 'effect') && <span className="mclip-label">{kind === 'text' ? clip.text?.content || 'Texto' : clip.fx || 'Efeito'}</span>}
+      {(kind === 'text' || kind === 'effect') && <span className="mclip-label">{kind === 'text' ? clip.text?.content || 'Texto' : (typeof clip.fx === 'string' ? clip.fx : clip.fx?.type) || 'Efeito'}</span>}
       {kind === 'audio' && <span className="mclip-label audio">{media?.name}</span>}
       {media?.missing && (
         <span className="mclip-missing">

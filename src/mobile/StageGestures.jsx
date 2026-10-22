@@ -3,6 +3,7 @@ import { useStore, clipEnd, DEFAULT_TRANSFORM } from '../store';
 import { engine, visualBox } from '../engine';
 import { transformAt, applyProp } from '../keyframes';
 import { haptic } from './ui';
+import { timeNow } from './timebus';
 
 const SNAP_PX = 6;
 const TAP_MOVE = 8; // pixels: abaixo disso o toque ainda é um "toque"
@@ -61,7 +62,7 @@ export default function StageGestures({ w, h }) {
     st.live((p) => {
       const c = p.clips.find((x) => x.id === id);
       if (!c) return;
-      for (const [k, v] of Object.entries(patch)) applyProp(c, k, v, st.currentTime - c.start, tol);
+      for (const [k, v] of Object.entries(patch)) applyProp(c, k, v, timeNow() - c.start, tol);
     });
   };
 

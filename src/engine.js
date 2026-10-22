@@ -16,7 +16,7 @@ export const IOS_LIKE = typeof navigator !== 'undefined' && (/iphone|ipad|ipod/i
 
 // Motor de reprodução: mantém um <video> por clipe próximo do cursor, sincroniza
 // com o relógio da linha do tempo e desenha as trilhas de vídeo num canvas.
-class Engine {
+export class Engine {
   canvas = null;
   g = null;
   entries = new Map(); // clipId -> { el, mediaId, gain, primed }
@@ -52,6 +52,18 @@ class Engine {
   lastDrawAt = 0;
   drewNow = false;
   rvfc = typeof HTMLVideoElement !== 'undefined' && 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+
+  tickFns = new Set(); // quem quer o tempo a cada quadro (sem passar pelo store)
+
+  onTick(fn) {
+    this.tickFns.add(fn);
+    return () => this.tickFns.delete(fn);
+  }
+
+  // O tempo de agora: tocando, o do relógio do motor (o do store pode estar um pouco atrasado).
+  timeNow() {
+    return this.playing && this.lastTime >= 0 ? this.lastTime : useStore.getState().currentTime;
+  }
 
   drawUntil = 0; // o player só redesenha parado enquanto algo mudou (poupa CPU/GPU/bateria)
   slowFrames = 0;
@@ -113,13 +125,17 @@ class Engine {
     this.canvas = canvas;
     this.g = canvas.getContext('2d');
     this.unsub = useStore.subscribe(() => this.invalidate());
-    this.onHide = () => document.hidden && this.cool();
+    this.onHide = () => document.hidden && this.onHidden();
     document.addEventListener('visibilitychange', this.onHide);
     this.onFonts = () => this.invalidate(300);
     document.fonts?.addEventListener?.('loadingdone', this.onFonts);
     onLutReady(() => this.invalidate(300));
     this.invalidate(1000);
     if (!this.raf) this.raf = requestAnimationFrame(this.loop);
+  }
+
+  onHidden() {
+    this.cool();
   }
 
   detach() {
@@ -211,8 +227,8 @@ class Engine {
 
   // Recorta o quadro com a máscara (mesmo desenho usado na exportação).
   applyMask(src, mask) {
-    const w = src.videoWidth || src.naturalWidth || src.width;
-    const h = src.videoHeight || src.naturalHeight || src.height;
+    const w = src.videoWidth || src.naturalWidth || src.displayWidth || src.width;
+    const h = src.videoHeight || src.naturalHeight || src.displayHeight || src.height;
     if (!w || !h) return src;
     const k = Math.min(1, 1920 / Math.max(w, h));
     const W = Math.max(1, Math.round(w * k));
@@ -235,8 +251,8 @@ class Engine {
 
   // Brilho: uma cópia desfocada somada por cima no modo "tela" (igual a gblur + blend screen do FFmpeg).
   applyGlow(src, glow) {
-    const w = src.videoWidth || src.naturalWidth || src.width;
-    const h = src.videoHeight || src.naturalHeight || src.height;
+    const w = src.videoWidth || src.naturalWidth || src.displayWidth || src.width;
+    const h = src.videoHeight || src.naturalHeight || src.displayHeight || src.height;
     if (!w || !h) return src;
     const k = Math.min(1, 1920 / Math.max(w, h));
     const W = Math.max(1, Math.round(w * k));
@@ -848,6 +864,24 @@ class Engine {
     this.draw(t, p, mediaById);
   }
 
+  // Imagem do clipe de vídeo para desenhar agora (um <video>, um quadro guardado...), ou null se ainda não há.
+  sourceOf(c, t) {
+    const entry = this.entries.get(c.id);
+    if (!entry) return null;
+    // Durante uma busca (arrastar a barra, mudar velocidade) o vídeo fica sem quadro
+    // por um instante; desenha o último quadro guardado para o player não piscar preto.
+    if (entry.capturing) return entry.snap || null;
+    if (entry.ramp && entry.strip) {
+      const i = Math.round((sourceAt(c, t - c.start) - entry.strip.start) / entry.strip.dt);
+      return entry.strip.bitmaps[Math.max(0, Math.min(entry.strip.bitmaps.length - 1, i))];
+    }
+    if (entry.el.readyState >= 2) {
+      if (!this.lite || !this.playing) this.keepFrame(entry);
+      return entry.el;
+    }
+    return entry.snap || null;
+  }
+
   // Desenha de baixo (trilha principal) para cima (sobreposições).
   draw(t, p, mediaById) {
     if (!this.canvas) return;
@@ -873,21 +907,8 @@ class Engine {
           src = this.getImage(m);
           if (!src.complete || !src.naturalWidth) continue;
         } else {
-          const entry = this.entries.get(c.id);
-          if (!entry) continue;
-          // Durante uma busca (arrastar a barra, mudar velocidade) o vídeo fica sem quadro
-          // por um instante; desenha o último quadro guardado para o player não piscar preto.
-          if (entry.capturing) {
-            if (entry.snap) src = entry.snap;
-            else continue;
-          } else if (entry.ramp && entry.strip) {
-            const i = Math.round((sourceAt(c, t - c.start) - entry.strip.start) / entry.strip.dt);
-            src = entry.strip.bitmaps[Math.max(0, Math.min(entry.strip.bitmaps.length - 1, i))];
-          } else if (entry.el.readyState >= 2) {
-            src = entry.el;
-            if (!this.lite || !this.playing) this.keepFrame(entry);
-          } else if (entry.snap) src = entry.snap;
-          else continue;
+          src = this.sourceOf(c, t);
+          if (!src) continue;
         }
         // Cor (filtro, ajustes, LUT, vinheta, nitidez) aplicada na placa de vídeo.
         // Chroma key (fundo verde) também é feito ali, antes da cor.
@@ -938,8 +959,8 @@ export function clipBox(m, clip, W, H) {
 function drawClip(g, src, m, clip, W, H, blur = 0, blend) {
   const box = clipBox(m, clip, W, H);
   const crop = cropOf(clip);
-  const sw = src.videoWidth || src.naturalWidth || src.width;
-  const sh = src.videoHeight || src.naturalHeight || src.height;
+  const sw = src.videoWidth || src.naturalWidth || src.displayWidth || src.width;
+  const sh = src.videoHeight || src.naturalHeight || src.displayHeight || src.height;
   g.save();
   g.globalAlpha = Math.max(0, Math.min(1, clip.transform?.opacity ?? 1));
   if (blur > 0.05) g.filter = `blur(${blur}px)`;
@@ -953,4 +974,9 @@ function drawClip(g, src, m, clip, W, H, blur = 0, blend) {
   g.restore();
 }
 
-export const engine = new Engine();
+export let engine = new Engine();
+
+// O celular troca o motor por um próprio (src/liteEngine.js), antes de a tela abrir.
+export function setEngine(e) {
+  engine = e;
+}

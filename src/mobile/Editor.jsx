@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStore, projectDuration, clipDur, ASPECTS, DEFAULT_TRANSFORM, setPreviewQuality } from '../store';
 import { engine, IOS_LIKE } from '../engine';
+import { onTime, timeNow } from './timebus';
 import { transformAt, valueAt, applyProp, hasKeyframes, findKey, setKeyframe, removeKeyframe, keyframeTimes, KF_PROPS, EASES } from '../keyframes';
 import { addMediaToTimeline, deleteSelection, duplicateSelection, goHome, seek, setClipSpeed, setProjectFormat, splitAtPlayhead } from '../ops';
 import { Icon } from '../icons';
@@ -195,15 +196,18 @@ function Time({ onSecret }) {
   useEffect(() => {
     let last = '';
     let lastTotal = '';
-    const apply = () => {
-      const s = useStore.getState();
-      const a = fmt(s.currentTime);
-      const b = fmt(projectDuration(s.project));
+    const apply = (t) => {
+      const a = fmt(t);
       if (a !== last && cur.current) cur.current.textContent = last = a;
+      const b = fmt(projectDuration(useStore.getState().project));
       if (b !== lastTotal && tot.current) tot.current.textContent = lastTotal = ' / ' + b;
     };
-    apply();
-    return useStore.subscribe(apply);
+    const un1 = onTime(apply);
+    const un2 = useStore.subscribe(() => apply(timeNow())); // a duração pode mudar sem o tempo mudar
+    return () => {
+      un1();
+      un2();
+    };
   }, []);
   return (
     <div
@@ -482,7 +486,7 @@ function PropSlider({ clip, prop, label, min, max, step, scale = 1, format, def 
         useStore.getState().live((q) => {
           const c = q.clips.find((x) => x.id === clip.id);
           if (!c) return;
-          const loc = clamp(useStore.getState().currentTime - c.start, 0, clipDur(c));
+          const loc = clamp(timeNow() - c.start, 0, clipDur(c));
           applyProp(c, prop, v / scale, loc, tol);
         })
       }

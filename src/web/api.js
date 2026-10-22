@@ -5,6 +5,7 @@ import { registerBlob, webBlob, webUrl, webName, webId, isWebPath, makeWebPath, 
 import { useStore } from '../store';
 import { makePreviewProxy } from './proxy';
 import { engine } from '../engine';
+import { framesSupported, thumbsFromFrames, openSource, playsDirect } from './frames';
 
 const IMAGE_RE = /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i;
 const AUDIO_RE = /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac|wma)$/i;
@@ -34,7 +35,8 @@ export async function storeFiles(fileList) {
     const id = rid();
     const path = makeWebPath(id, f.name || 'arquivo');
     registerBlob(path, f);
-    if (typeOfFile(f) === 'video') prewarmVideo(path);
+    // Vídeo escolhido: já lê o índice dos quadros (celular) ou começa a carregar um <video> (navegador sem WebCodecs).
+    if (typeOfFile(f) === 'video') framesSupported() ? openSource(f) : prewarmVideo(path);
     const job = dbPut('files', id, { blob: f, name: f.name, type: f.type, size: f.size })
       .catch((err) => useStore.getState().notify('Não foi possível guardar "' + (f.name || 'arquivo') + '" no aparelho (falta de espaço?): ' + String(err?.message || err), 'error'))
       .finally(() => pendingWrites.delete(job));
@@ -45,21 +47,23 @@ export async function storeFiles(fileList) {
 }
 
 // ---------- trabalho de fundo (miniaturas, onda) ----------
-// Um de cada vez e só quando o player está livre: o primeiro quadro aparece antes e tocar não trava.
-let bgChain = Promise.resolve();
+// Tarefas de fundo (miniaturas, onda do som): uma de cada vez em cada fila (imagem / som), e só quando o player não está
+// tocando nem esperando o primeiro quadro: o quadro aparece antes e tocar não trava.
+const lanes = { v: Promise.resolve(), a: Promise.resolve() };
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 async function playerFree(maxWait = 10000) {
   const t0 = performance.now();
-  await sleepMs(150);
   while (performance.now() - t0 < maxWait) {
-    const busy = useStore.getState().playing || [...engine.entries.values()].some((e) => e.el.readyState < 2 && !e.el.error);
-    if (!busy) return;
-    await sleepMs(250);
+    const playing = useStore.getState().playing;
+    // esperando o primeiro quadro: no máximo ~0,6 s (com a decodificação própria ele sai em ~60 ms)
+    const loading = performance.now() - t0 < 600 && (engine.loading ? engine.loading() : [...engine.entries.values()].some((e) => e.el.readyState < 2 && !e.el.error));
+    if (!playing && !loading) return;
+    await sleepMs(playing ? 250 : 40);
   }
 }
-const background = (fn) => {
-  const p = bgChain.then(() => playerFree()).then(fn);
-  bgChain = p.catch(() => {});
+const background = (fn, lane = 'v') => {
+  const p = lanes[lane].then(() => playerFree()).then(fn);
+  lanes[lane] = p.catch(() => {});
   return p;
 };
 
@@ -177,13 +181,20 @@ async function makeThumbnails(path, duration, type) {
     await img.decode();
     return { interval: 0, frames: [shot(img, img.naturalWidth, img.naturalHeight)] };
   }
+  const count = Math.max(1, Math.min(20, Math.ceil(duration / (duration > 90 ? 5 : 2))));
+  // Celular: decodifica os quadros direto do arquivo (bem mais rápido do que buscar num <video>).
+  if (framesSupported()) {
+    try {
+      const fast = await thumbsFromFrames(webBlob(path), count, THUMB_H, () => (useStore.getState().playing ? playerFree() : null));
+      if (fast) return fast;
+    } catch {}
+  }
   const v = document.createElement('video');
   v.muted = true;
   v.playsInline = true;
   v.preload = 'auto';
   v.src = url;
   await waitFor(v, 'loadeddata');
-  const count = Math.max(1, Math.min(20, Math.ceil(duration / (duration > 90 ? 5 : 2))));
   const interval = Math.max(duration / count, 0.05);
   const frames = [];
   for (let i = 0; i < count; i++) {
@@ -199,7 +210,7 @@ async function makeThumbnails(path, duration, type) {
 }
 
 async function waveform(path, duration = 0) {
-  return cached(path, '-w', () => background(() => makeWaveform(path, duration)));
+  return cached(path, '-w', () => background(() => makeWaveform(path, duration), 'a'));
 }
 
 async function makeWaveform(path, duration) {
@@ -327,6 +338,7 @@ export function installWebApi() {
     showItem: () => {},
     saveProject: async () => null,
     previewProxy: makePreviewProxy,
+    playsDirect: async (path) => (framesSupported() ? playsDirect(await openSource(webBlob(path))) : false),
     proxyMinSide: 1000, // no celular qualquer vídeo acima de HD ganha prévia leve
     proxyThumbs: true, // e as miniaturas saem da própria geração da cópia
     audioProxy: unsupported('Efeito de áudio'),

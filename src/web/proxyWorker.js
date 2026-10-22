@@ -38,7 +38,7 @@ function audioSpecificConfig(file, trackId) {
   return entry.esds.esd.descs[0].descs[0].data;
 }
 
-async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 12 }) {
+async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 6 }) {
   if (blob.size > 400 * 1024 * 1024) throw new Error('arquivo grande demais para a prévia leve');
   const file = createFile();
   let info = null;
