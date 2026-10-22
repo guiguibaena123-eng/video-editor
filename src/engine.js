@@ -316,10 +316,10 @@ class Engine {
       const budget = 1000 / Math.min(60, s.project.settings.fps || 30);
       if (this.emaInterval > budget * 1.4) this.slowFrames++;
       else this.slowFrames = Math.max(0, this.slowFrames - 1);
-      if (this.slowFrames > 40 && s.autoScale > 0.4) {
+      if (this.slowFrames > 40 && s.autoScale > (this.lite ? 0.65 : 0.4)) {
         this.slowFrames = 0;
         this.emaInterval = 0;
-        useStore.setState({ autoScale: Math.max(0.4, +(s.autoScale * 0.8).toFixed(2)) });
+        useStore.setState({ autoScale: Math.max(this.lite ? 0.65 : 0.4, +(s.autoScale * 0.8).toFixed(2)) });
       }
     }
     this.lastLoop = now;
@@ -359,6 +359,7 @@ class Engine {
     const nowMs = performance.now();
     if (!this.lastTickMs || nowMs - this.lastTickMs > 250) this.lastTickMs = nowMs;
     let hold = 0;
+    let stalled = false; // o vídeo mestre ainda não tem quadro: mantém na tela o último quadro bom
     let hasMaster = false; // já há um vídeo mestre do relógio neste quadro
 
     for (const c of p.clips) {
@@ -407,8 +408,11 @@ class Engine {
       if (this.lite && this.playing && !hasMaster && !tr.hidden) {
         hasMaster = true;
         const lag = target - el.currentTime;
-        if ((el.seeking || el.readyState < 3) && !el.error) hold = nowMs - this.lastTickMs;
-        else if (lag > 0.06 && lag < 1.2) hold = Math.min(nowMs - this.lastTickMs, lag * 1000) * 0.5;
+        if ((el.seeking || el.readyState < 2) && !el.error) {
+          hold = nowMs - this.lastTickMs;
+          stalled = true;
+        }
+        if (!stalled && lag > 0.06 && lag < 1.2) hold = Math.min(nowMs - this.lastTickMs, lag * 1000) * 0.5;
       }
     }
     // Espera no máximo ~2,5 s seguidos (se o vídeo nunca chega, a linha do tempo volta a andar).
@@ -417,6 +421,8 @@ class Engine {
     this.lastTickMs = nowMs;
 
     for (const id of [...this.entries.keys()]) if (!near.has(id)) this.dispose(id);
+    // Esperando o vídeo (troca de clipe, busca): não redesenha, para não piscar preto entre um quadro e outro.
+    if (stalled && this.playing && this.heldMs < 2500) return;
     this.draw(t, p, mediaById);
   }
 

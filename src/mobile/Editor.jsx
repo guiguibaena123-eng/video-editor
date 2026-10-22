@@ -89,7 +89,6 @@ function Stage() {
   const settings = useStore((s) => s.project.settings);
   const quality = useStore((s) => s.previewQuality);
   const autoScale = useStore((s) => s.autoScale);
-  const playing = useStore((s) => s.playing);
   const empty = useStore((s) => s.project.clips.length === 0);
   const aspect = settings.width / settings.height;
 
@@ -129,11 +128,6 @@ function Stage() {
     <section className="mstage" ref={stageRef}>
       <div className="canvas-wrap" style={{ width: size.w, height: size.h }} onClick={() => !empty && engine.toggle()}>
         <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} />
-        {!empty && !playing && (
-          <span className="mstage-play" aria-hidden="true">
-            <Icon name="play" size={30} />
-          </span>
-        )}
       </div>
     </section>
   );
