@@ -35,6 +35,11 @@ class Engine {
   lastTickMs = 0;
   heldMs = 0;
   stalledPrev = false;
+  // "Quente" (celular): ao parar, o vídeo do ponto atual não é pausado — fica rodando a taxa 0, mudo, com o
+  // decodificador ligado. Dar play vira só trocar a taxa para 1: o quadro novo sai em ~1–2 quadros, sem ligar nada.
+  cold = false; // depois de 20 s parado tudo é pausado de verdade (bateria)
+  noHot = false; // este navegador não respeita taxa 0: usa pausa normal
+  coolT = 0;
   stats = { rejects: 0, lastErr: '', plays: 0, rvfc: 0, sync: 0, holds: [] }; // para o painel de diagnóstico do celular
   frameFlag = false; // chegou um quadro novo do vídeo (requestVideoFrameCallback)
   lastDrawAt = 0;
@@ -49,12 +54,60 @@ class Engine {
   // Pede para desenhar nos próximos instantes (mudou o projeto, o tempo, o tamanho...).
   invalidate(ms = 450) {
     this.drawUntil = Math.max(this.drawUntil, performance.now() + ms);
+    if (this.lite && !this.playing) {
+      this.cold = false;
+      clearTimeout(this.coolT);
+      this.coolT = setTimeout(() => this.cool(), 20000);
+    }
+  }
+
+  // Esfria: pausa de verdade o que estava "quente" (sem mexer há 20 s, ou o app foi para o segundo plano).
+  cool() {
+    if (this.playing) return;
+    this.cold = true;
+    for (const e of this.entries.values()) for (const el of [e.el, e.ael]) if (el && !el.paused && el.playbackRate === 0) el.pause();
+  }
+
+  // Parar sem esfriar o decodificador (ver "quente").
+  park(el) {
+    if (el.paused) return;
+    if (!this.lite || this.cold || this.noHot) return void el.pause();
+    try {
+      el.playbackRate = 0;
+    } catch {
+      return void el.pause();
+    }
+    if (el.playbackRate !== 0) el.pause();
+  }
+
+  // Esquenta um vídeo parado: roda mudo a taxa 0. Se o navegador não respeitar (a posição andou), desiste.
+  heat(el) {
+    if (!el.paused) {
+      const h = el.__heat;
+      if (h && el.playbackRate === 0 && !el.seeking && performance.now() - h.t > 400) {
+        if (Math.abs(el.currentTime - h.ct) > 0.15) {
+          this.noHot = true;
+          el.pause();
+        }
+        el.__heat = null;
+      }
+      return;
+    }
+    if (!this.lite || this.cold || this.noHot || el.readyState < 2 || el.seeking || el.ended) return;
+    try {
+      el.muted = true;
+      el.playbackRate = 0;
+      el.__heat = { t: performance.now(), ct: el.currentTime };
+      el.play().catch(() => {});
+    } catch {}
   }
 
   attach(canvas) {
     this.canvas = canvas;
     this.g = canvas.getContext('2d');
     this.unsub = useStore.subscribe(() => this.invalidate());
+    this.onHide = () => document.hidden && this.cool();
+    document.addEventListener('visibilitychange', this.onHide);
     this.onFonts = () => this.invalidate(300);
     document.fonts?.addEventListener?.('loadingdone', this.onFonts);
     onLutReady(() => this.invalidate(300));
@@ -65,6 +118,8 @@ class Engine {
   detach() {
     this.unsub?.();
     document.fonts?.removeEventListener?.('loadingdone', this.onFonts);
+    document.removeEventListener('visibilitychange', this.onHide);
+    clearTimeout(this.coolT);
     cancelAnimationFrame(this.raf);
     this.raf = 0;
     this.canvas = null;
@@ -123,7 +178,7 @@ class Engine {
       const drift = el.currentTime - target;
       if (Math.abs(drift) > 0.02 && Math.abs(drift) <= tol) rate *= 1 - Math.max(-0.12, Math.min(0.12, drift * 0.8));
     }
-    if (Math.abs(el.playbackRate - rate) > 5e-4) el.playbackRate = rate;
+    if (this.playing && Math.abs(el.playbackRate - rate) > 5e-4) el.playbackRate = rate;
     if (el.preservesPitch !== keepPitch) el.preservesPitch = keepPitch;
     if (this.playing) {
       if (el.paused) {
@@ -137,7 +192,8 @@ class Engine {
         el.currentTime = target;
       }
     } else {
-      if (!el.paused) el.pause();
+      this.park(el);
+      this.heat(el);
       if (!el.seeking && Math.abs(el.currentTime - target) > 0.015) {
         // Arrastando a linha do tempo: no Safari, "fastSeek" vai ao quadro-chave mais próximo (rápido); ao soltar vem a busca exata.
         if (this.scrubbing && el.fastSeek && Math.abs(el.currentTime - target) > 0.25) el.fastSeek(target);
@@ -244,6 +300,8 @@ class Engine {
     this.heldMs = 0;
     // Começo instantâneo: a linha do tempo anda NA HORA, sem esperar o decodificador ligar; o vídeo (e o som dele)
     // entram uns 50–150 ms depois e correm até 2× por um instante para alcançá-la.
+    clearTimeout(this.coolT);
+    this.cold = false;
     this.catchUp = this.lite;
     this.catchStart = performance.now();
     this.stalledPrev = false;
@@ -270,12 +328,17 @@ class Engine {
     this.stopAt = null;
     this.playing = false;
     this.catchUp = false;
-    for (const e of this.entries.values()) {
+    const st = useStore.getState();
+    const tNow = st.currentTime;
+    for (const [id, e] of this.entries) {
       if (this.lite && e.el.readyState >= 2 && !e.snap) this.keepFrame(e); // quadro de apoio para buscas depois de parar
-      e.el.pause();
+      const c = st.project.clips.find((x) => x.id === id);
+      if (c && tNow >= c.start && tNow < clipEnd(c)) this.park(e.el);
+      else e.el.pause();
       e.ael?.pause();
     }
     useStore.setState({ playing: false });
+    this.invalidate(600);
   }
 
   toggle() {
@@ -504,6 +567,7 @@ class Engine {
       if (this.lite && !entry.gain) this.connect(entry, vol);
       this.setVolume(el, entry.gain, entry.ael ? 0 : vol);
       if (entry.ael) this.setVolume(entry.ael, entry.again, vol);
+      if (!this.playing && !el.paused) el.muted = true;
 
       if (!active) {
         // Pré-aquecimento: o próximo clipe (outro arquivo ou outro ponto) começa a rodar em câmera lenta, mudo, pouco
@@ -559,9 +623,9 @@ class Engine {
         if (this.catchUp) {
           const lag = target - el.currentTime;
           const notReady = (el.seeking || el.readyState < 2) && !el.error;
-          if (notReady || lag > 1 || nowMs - this.catchStart > 1500 || (entry.live && Math.abs(lag) < 0.03)) {
+          if (notReady || lag > 1 || nowMs - this.catchStart > 1500 || (entry.live && lag < 0.03)) {
             this.catchUp = false;
-            if (entry.live && !notReady && Math.abs(lag) < 0.1) entry.snapped = true; // já está colado: nada de pulo
+            if (entry.live && !notReady && Math.abs(lag) < 0.15) entry.snapped = true; // já está colado: o relógio só o acompanha, sem pulo
           }
         }
         if (this.catchUp) {
