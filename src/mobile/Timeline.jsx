@@ -55,6 +55,27 @@ export default function MTimeline({ onAdd }) {
     return onTime(apply);
   }, [W, zoom]);
 
+  // Os toques chegam até 120 vezes por segundo; o tempo e o zoom só são gravados uma vez por quadro (o último valor).
+  const pend = useRef({ t: null, z: null, raf: 0 });
+  const flush = () => {
+    const q = pend.current;
+    q.raf = 0;
+    if (q.z != null) {
+      const z = q.z;
+      q.z = null;
+      useStore.getState().setZoom(z);
+    }
+    if (q.t != null) {
+      const t = q.t;
+      q.t = null;
+      seek(t);
+    }
+  };
+  const later = () => {
+    if (!pend.current.raf) pend.current.raf = requestAnimationFrame(flush);
+  };
+  useEffect(() => () => cancelAnimationFrame(pend.current.raf), []);
+
   const stopInertia = () => {
     cancelAnimationFrame(inertia.current);
     inertia.current = 0;
@@ -211,7 +232,8 @@ export default function MTimeline({ onAdd }) {
     if (st.mode === 'pinch' && st.pointers.size >= 2) {
       const [a, b] = [...st.pointers.values()];
       const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
-      useStore.getState().setZoom(st.z0 * (d / st.d0));
+      pend.current.z = st.z0 * (d / st.d0);
+      later();
       return;
     }
     if (e.pointerId !== st.id) return;
@@ -226,7 +248,8 @@ export default function MTimeline({ onAdd }) {
     }
     if (st.mode === 'scrub') {
       const z = useStore.getState().zoom;
-      seek(clamp(st.t0 - (e.clientX - st.sx) / z, 0, Math.max(total, 0)));
+      pend.current.t = clamp(st.t0 - (e.clientX - st.sx) / z, 0, Math.max(total, 0));
+      later();
       const now = performance.now();
       st.samples.push([now, e.clientX]);
       while (st.samples.length > 2 && now - st.samples[0][0] > 90) st.samples.shift();
@@ -242,6 +265,10 @@ export default function MTimeline({ onAdd }) {
     }
     if (e.pointerId !== st.id) return;
     clearTimeout(st.lp);
+    if (pend.current.t != null || pend.current.z != null) {
+      cancelAnimationFrame(pend.current.raf);
+      flush();
+    }
     if (st.mode === 'pending') {
       // Toque simples: seleciona o clipe (ou limpa a seleção).
       const s = useStore.getState();

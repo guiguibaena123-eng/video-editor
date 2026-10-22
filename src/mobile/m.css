@@ -606,6 +606,7 @@ canvas {
   border-top: 1px solid var(--m-border);
   overflow: hidden;
   touch-action: pan-y;
+  contain: layout paint style;
 }
 .mtl-ruler {
   position: absolute;
