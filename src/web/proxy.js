@@ -46,7 +46,7 @@ async function run(path, hasAudio, onProgress, duration, onThumbs) {
         else if (m.type === 'error') reject(new Error(m.message));
       };
       worker.onerror = (e) => reject(new Error(e.message || 'falha na prévia leve'));
-      worker.postMessage({ type: 'start', blob, hasAudio, shortSide: globalThis.__PROXY_SHORT || 540 });
+      worker.postMessage({ type: 'start', blob, hasAudio, shortSide: globalThis.__PROXY_SHORT || 540, gop: globalThis.__PROXY_GOP || 12 });
       if (useStore.getState().playing) worker.postMessage({ type: 'hold', on: true });
     });
   } finally {

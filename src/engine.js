@@ -390,7 +390,11 @@ class Engine {
       el.preload = 'auto';
       el.playsInline = true;
       if (!el.src) el.src = mediaUrl(want);
-      el.addEventListener('seeked', () => this.requestDraw());
+      el.addEventListener('seeked', () => {
+        // Arrastando a linha do tempo, o próximo pedido de busca sai antes do desenho: guarda o quadro que acabou de chegar.
+        if (!this.playing && el.readyState >= 2 && !entry.capturing) this.keepFrame(entry);
+        this.requestDraw();
+      });
       el.addEventListener('loadeddata', () => this.requestDraw());
       entry = { el, mediaId: media.id, gain: null, primed: false, srcPath: want, live: false };
       // "live" = o vídeo está de fato rodando agora (não só mandado tocar): o relógio espera por isso.
