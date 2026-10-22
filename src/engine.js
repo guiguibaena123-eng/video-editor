@@ -110,7 +110,7 @@ class Engine {
     // até 8%, sem busca — a busca faz o som falhar e voltar "bugado". Só para quem segue a linha do tempo.
     if (nudge && this.playing && !el.paused && !el.seeking) {
       const drift = el.currentTime - target;
-      if (Math.abs(drift) > 0.02 && Math.abs(drift) <= tol) rate *= 1 - Math.max(-0.08, Math.min(0.08, drift * 0.5));
+      if (Math.abs(drift) > 0.02 && Math.abs(drift) <= tol) rate *= 1 - Math.max(-0.12, Math.min(0.12, drift * 0.8));
     }
     if (Math.abs(el.playbackRate - rate) > 5e-4) el.playbackRate = rate;
     if (el.preservesPitch !== keepPitch) el.preservesPitch = keepPitch;
@@ -375,7 +375,7 @@ class Engine {
       // Se no quadro anterior o vídeo mestre ainda não estava rodando, o relógio não anda neste (espera por ele).
       const nowT = performance.now();
       if (this.lite && this.stalledPrev && this.heldMs < 2500 && this.lastTickMs) this.clock.wall0 += nowT - this.lastTickMs;
-      t = this.clock.t0 + (nowT - this.clock.wall0) / 1000;
+      t = Math.max(0, this.clock.t0 + (nowT - this.clock.wall0) / 1000);
       if (t >= total || (this.stopAt != null && t >= this.stopAt)) {
         t = Math.min(t, total, this.stopAt ?? total);
         this.pause();
@@ -457,7 +457,7 @@ class Engine {
       if ((el.seeking || el.readyState < 2) && !el.error) this.invalidate(150);
       const target = sourceAt(c, t - c.start);
       const isMaster = c.id === masterId;
-      if (this.lite && this.playing && !isMaster && this.stalledPrev && !this.startHold) {
+      if (this.lite && this.playing && !isMaster && this.stalledPrev && (!this.startHold || this.mSeek)) {
         // O mestre está esperando o vídeo chegar: os outros sons param juntos (senão ficam adiantados).
         if (!el.paused) el.pause();
         if (entry.ael && !entry.ael.paused) entry.ael.pause();
@@ -477,6 +477,7 @@ class Engine {
         if (!el.paused && !el.seeking && el.readyState >= 2 && entry.lastCT != null && el.currentTime !== entry.lastCT && !entry.live) entry.live = true;
         const justLive = entry.live && !entry.snapped;
         entry.lastCT = el.currentTime;
+        this.mSeekNow = (el.seeking || el.readyState < 2) && !el.error;
         if (this.startHold && (entry.live || this.heldMs >= 2500)) this.startHold = false;
         if (((el.seeking || el.readyState < 2) && !el.error) || (!entry.live && !el.error)) {
           // Ainda não está rodando (começando a tocar, buscando ou carregando): a linha do tempo espera.
@@ -500,6 +501,8 @@ class Engine {
     this.heldMs = stalled ? this.heldMs + (nowMs - this.lastTickMs) : 0;
     this.lastTickMs = nowMs;
     this.stalledPrev = stalled;
+    this.mSeek = this.mSeekNow; // o mestre está buscando (pulou o tempo): os outros sons esperam por ele, não correm à frente
+    this.mSeekNow = false;
 
     for (const id of [...this.entries.keys()]) if (!near.has(id)) this.dispose(id);
     // Esperando o vídeo (troca de clipe, busca): não redesenha, para não piscar preto entre um quadro e outro.

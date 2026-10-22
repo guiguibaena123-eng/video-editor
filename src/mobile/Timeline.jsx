@@ -62,6 +62,8 @@ export default function MTimeline({ onAdd }) {
     inertia.current = 0;
   };
   useEffect(() => stopInertia, []);
+  // Apertar play (ou qualquer coisa que toque) encerra o deslizar da linha do tempo: senão ela puxa o tempo para trás enquanto toca.
+  useEffect(() => useStore.subscribe((s, prev) => s.playing && !prev.playing && stopInertia()), []);
 
   const targetsFor = (exclude) => {
     const p = useStore.getState().project;
