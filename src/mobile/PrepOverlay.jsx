@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useStore } from '../store';
+import { useStore, clipEnd } from '../store';
 import { engine } from '../engine';
 
 const fmt = (v) => Math.round(v * 100) + '%';
@@ -72,7 +72,16 @@ export default function PrepOverlay() {
         if (c?.proxyState !== 'ready') return true;
         return entries.filter((e) => e.mediaId === mid).every((e) => e.srcPath === c.proxy);
       });
-      if (assetsOk && ((frameReady && swapped) || waited > 11000) && s.prep) {
+      // Os primeiros quadros do ponto atual já decodificados (tira): o primeiro play começa sem congelar.
+      const stripsOk =
+        !engine.stripsOn ||
+        [...engine.entries.entries()].every(([eid, e]) => {
+          const c = s.project.clips.find((x) => x.id === eid);
+          if (!c || s.currentTime < c.start || s.currentTime >= clipEnd(c)) return true;
+          const m = s.media.find((x) => x.id === c.mediaId);
+          return !m || m.type !== 'video' || !engine.canStrip(e, m) || !!e.strip;
+        });
+      if (assetsOk && ((frameReady && swapped && (stripsOk || waited > 6000)) || waited > 11000) && s.prep) {
         clearInterval(id);
         doneAt.current = 0;
         useStore.setState({ prep: null });

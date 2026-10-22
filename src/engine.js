@@ -38,10 +38,15 @@ class Engine {
   stalledPrev = false;
   // "Quente" (celular): ao parar, o vídeo do ponto atual não é pausado — fica rodando a taxa 0, mudo, com o
   // decodificador ligado. Dar play vira só trocar a taxa para 1: o quadro novo sai em ~1–2 quadros, sem ligar nada.
+  warmRate = 0.0625; // velocidade do pré-aquecimento do próximo clipe
+  warmLead = 0.7; // quantos segundos antes ele começa
+  stripsOn = true; // tira de quadros ligada (desligar só em testes)
   cold = false; // depois de 20 s parado tudo é pausado de verdade (bateria)
   noHot = false; // este navegador não respeita taxa 0: usa pausa normal
   coolT = 0;
   stats = { rejects: 0, lastErr: '', plays: 0, rvfc: 0, sync: 0, holds: [] }; // para o painel de diagnóstico do celular
+  lastWritten = 0; // último tempo gravado na interface (a interface recebe ~30 Hz; o relógio corre a cada quadro)
+  lastWriteAt = 0;
   frameFlag = false; // chegou um quadro novo do vídeo (requestVideoFrameCallback)
   lastDrawAt = 0;
   drewNow = false;
@@ -303,10 +308,14 @@ class Engine {
     // entram uns 50–150 ms depois e correm até 2× por um instante para alcançá-la.
     clearTimeout(this.coolT);
     this.cold = false;
-    this.catchUp = this.lite;
-    this.catchStart = performance.now();
+    for (const e of this.entries.values()) {
+      e.wasActive = false; // o primeiro quadro abaixo abre a "rampa" de cada clipe ativo
+      e.capToken = (e.capToken || 0) + 1; // cancela capturas de quadros em andamento
+    }
     this.stalledPrev = false;
     this.lastTime = start;
+    this.lastWritten = start;
+    this.lastWriteAt = 0;
     this.playing = true;
     useStore.setState({ playing: true, currentTime: start });
     // O navegador só deixa o vídeo começar a tocar a partir de um toque: roda o primeiro passo já, dentro do toque
@@ -327,8 +336,12 @@ class Engine {
 
   pause() {
     this.stopAt = null;
+    // O último tempo calculado pode ainda não ter ido para a tela (veja frame()): grava antes de parar.
+    if (this.playing && this.lite && this.lastWritten !== this.lastTime && this.lastTime >= 0) {
+      useStore.setState({ currentTime: this.lastTime });
+      this.lastWritten = this.lastTime;
+    }
     this.playing = false;
-    this.catchUp = false;
     const st = useStore.getState();
     const tNow = st.currentTime;
     for (const [id, e] of this.entries) {
@@ -340,6 +353,10 @@ class Engine {
     }
     useStore.setState({ playing: false });
     this.invalidate(600);
+    if (this.lite) {
+      clearTimeout(this.idleT);
+      this.idleT = setTimeout(() => this.captureIdle(), 250);
+    }
   }
 
   toggle() {
@@ -361,6 +378,8 @@ class Engine {
       // Proxy ficou pronto (ou a qualidade mudou): troca a fonte; o último quadro guardado cobre a troca.
       this.keepFrame(entry);
       entry.srcPath = want;
+      entry.stripSlow = false;
+      this.dropStrip(entry);
       entry.el.src = mediaUrl(want);
       entry.primed = false;
     }
@@ -383,6 +402,7 @@ class Engine {
         const cb = () => {
           this.frameFlag = true;
           this.stats.rvfc++;
+          entry.vf = (entry.vf || 0) + 1; // quadros que este vídeo já apresentou (fim da rampa)
           if (!el.paused && !el.seeking) entry.live = true; // quadro novo apresentado: o vídeo está rodando
 
           if (!entry.dead) el.requestVideoFrameCallback(cb);
@@ -411,6 +431,7 @@ class Engine {
     const e = this.entries.get(clipId);
     if (!e) return;
     e.dead = true;
+    this.dropStrip(e);
     this.setProxy(e, null);
     e.el.pause();
     e.el.removeAttribute('src');
@@ -436,6 +457,105 @@ class Engine {
       this.entries.delete(prev.id);
       this.entries.set(c.id, pe);
       pe.primed = false;
+    }
+  }
+
+  // ---- "Tira de quadros": os primeiros ~0,33 s de um clipe, já decodificados em bitmaps ----
+  // Quando o vídeo volta a andar (play ou entrada de um clipe de outro arquivo) o navegador leva ~100–130 ms para
+  // entregar o primeiro quadro novo. Durante esse tempo o player desenha estes bitmaps (iguais aos quadros do vídeo),
+  // então a imagem não congela; assim que o vídeo emparelha, a tira é descartada.
+  seekTo(el, t, ms = 500) {
+    return new Promise((resolve) => {
+      if (!el.seeking && el.readyState >= 2 && Math.abs(el.currentTime - t) < 0.002) return resolve(true);
+      let to = 0;
+      const done = (ok) => {
+        clearTimeout(to);
+        el.removeEventListener('seeked', on);
+        resolve(ok);
+      };
+      const on = () => done(true);
+      to = setTimeout(() => done(false), ms);
+      el.addEventListener('seeked', on, { once: true });
+      el.currentTime = t;
+    });
+  }
+
+  // A tira só compensa em vídeo de busca rápida: a cópia leve ou vídeo pequeno. Original grande: pré-aquecimento lento.
+  canStrip(entry, m) {
+    if (entry.stripSlow) return false;
+    const proxy = /-p\/previa\.mp4$/.test(entry.srcPath || '');
+    return proxy || Math.max(m?.width || 0, m?.height || 0) <= 1280;
+  }
+
+  dropStrip(entry) {
+    if (entry.strip) for (const b of entry.strip.bitmaps) b.close?.();
+    entry.strip = null;
+  }
+
+  async captureStrip(entry, c, start, kind) {
+    // Só vale a pena em vídeo de busca rápida (a cópia leve): em original pesado cada busca leva centenas de ms.
+    if (!this.stripsOn || entry.capturing || entry.dead || entry.stripSlow || c.curve || typeof createImageBitmap === 'undefined') return;
+    const el = entry.el;
+    const token = (entry.capToken = (entry.capToken || 0) + 1);
+    const K = 10;
+    const dt = 1 / 30;
+    const bms = [];
+    entry.capturing = true;
+    let aborted = false;
+    try {
+      for (let k = 0; k < K; k++) {
+        if (entry.dead || entry.capToken !== token || (kind === 'idle' && this.playing)) {
+          aborted = true;
+          throw 0;
+        }
+        const t0 = performance.now();
+        if (!(await this.seekTo(el, start + k * dt))) throw 0;
+        if (k > 0 && performance.now() - t0 > 220) {
+          entry.stripSlow = true;
+          throw 0;
+        }
+        bms.push(await createImageBitmap(el));
+      }
+      await this.seekTo(el, start);
+      if (entry.dead || entry.capToken !== token) throw 0;
+      this.dropStrip(entry);
+      entry.strip = { start, dt, bitmaps: bms };
+    } catch {
+      entry.primed = false; // a busca da captura mexeu no vídeo: volta ao ponto de entrada
+      if (aborted && !entry.dead && bms.length >= 4 && !entry.stripSlow) {
+        // Tocou antes de terminar: os primeiros quadros já bastam para cobrir a partida do vídeo.
+        this.dropStrip(entry);
+        entry.strip = { start, dt, bitmaps: bms };
+      } else for (const b of bms) b.close?.();
+    } finally {
+      entry.capturing = false;
+      this.requestDraw();
+    }
+  }
+
+  // Parado e sem mexer: prepara a tira do ponto atual para o play seguinte começar sem congelar.
+  async captureIdle(tries = 0) {
+    if (!this.lite || this.playing || !this.stripsOn) return;
+    const s = useStore.getState();
+    const t = s.currentTime;
+    let waiting = false;
+    for (const c of s.project.clips) {
+      if (c.kind || t < c.start || t >= clipEnd(c) || c.curve) continue;
+      const entry = this.entries.get(c.id);
+      if (!entry || entry.el.readyState < 2 || entry.el.seeking) {
+        waiting = true; // ainda carregando: tenta de novo daqui a pouco
+        continue;
+      }
+      const m = s.media.find((x) => x.id === c.mediaId);
+      if (!m || m.type !== 'video' || !this.canStrip(entry, m)) continue;
+      const target = sourceAt(c, t - c.start);
+      if (entry.strip && Math.abs(entry.strip.start - target) < 0.02) continue;
+      await this.captureStrip(entry, c, target, 'idle');
+      if (this.playing || Math.abs(useStore.getState().currentTime - t) > 1e-4) return;
+    }
+    if (waiting && tries < 12) {
+      clearTimeout(this.idleT);
+      this.idleT = setTimeout(() => this.captureIdle(tries + 1), 500);
     }
   }
 
@@ -492,22 +612,49 @@ class Engine {
 
     if (this.playing) {
       // Se alguém mudou o tempo (clique na régua, atalhos), o relógio recomeça dali.
-      if (Math.abs(t - this.lastTime) > 1e-6) this.clock = { t0: t, wall0: performance.now() };
+      if (Math.abs(t - this.lastWritten) > 1e-6) this.clock = { t0: t, wall0: performance.now() };
       // Se no quadro anterior o vídeo mestre ainda não estava rodando, o relógio não anda neste (espera por ele).
       const nowT = performance.now();
       if (this.lite && this.stalledPrev && this.heldMs < 2500 && this.lastTickMs) this.clock.wall0 += nowT - this.lastTickMs;
       t = Math.max(0, this.clock.t0 + (nowT - this.clock.wall0) / 1000);
+      let ended = false;
       if (t >= total || (this.stopAt != null && t >= this.stopAt)) {
         t = Math.min(t, total, this.stopAt ?? total);
+        this.lastTime = t;
         this.pause();
+        ended = true;
       }
-      useStore.setState({ currentTime: t });
+      // O tempo vai para a tela (linha do tempo, contador) a ~30 Hz: o relógio interno corre a cada quadro, mas
+      // atualizar a interface 60 vezes por segundo pesa no celular sem ninguém enxergar a diferença.
+      if (ended || !this.lite || nowT - this.lastWriteAt >= 28) {
+        useStore.setState({ currentTime: t });
+        this.lastWritten = t;
+        this.lastWriteAt = nowT;
+      }
     }
     // Mexendo no tempo com o player parado (arrastando a linha): busca rápida; 200 ms sem mexer → busca exata.
     if (!this.playing) {
-      if (Math.abs(t - this.lastTime) > 1e-4) this.lastScrubAt = performance.now();
+      if (Math.abs(t - this.lastTime) > 1e-4) {
+        this.lastScrubAt = performance.now();
+        if (this.lite) {
+          clearTimeout(this.idleT);
+          this.idleT = setTimeout(() => this.captureIdle(), 200);
+        }
+      }
       this.scrubbing = performance.now() - (this.lastScrubAt || 0) < 200;
       if (this.scrubbing) this.invalidate(350);
+      else if (this.lite && this.stripsOn && !this.idlePending) {
+        // Parado há um instante e algum clipe visível ainda sem a tira de quadros: prepara (ex.: logo depois de carregar).
+        const need = [...this.entries.entries()].some(([id, e]) => !e.strip && !e.capturing && !e.stripSlow && e.wasActive !== undefined && p.clips.some((c) => c.id === id && t >= c.start && t < clipEnd(c) && !c.kind && !c.curve));
+        if (need) {
+          this.idlePending = true;
+          clearTimeout(this.idleT);
+          this.idleT = setTimeout(() => {
+            this.idlePending = false;
+            this.captureIdle();
+          }, 450);
+        }
+      }
     } else this.scrubbing = false;
     this.lastTime = t;
 
@@ -573,27 +720,45 @@ class Engine {
       if (!this.playing && !el.paused) el.muted = true;
 
       if (!active) {
-        // Pré-aquecimento: o próximo clipe (outro arquivo ou outro ponto) começa a rodar em câmera lenta, mudo, pouco
-        // antes da sua hora. Na hora H o decodificador já está funcionando e a entrada não trava.
+        entry.wasActive = false;
+        entry.ramp = 0;
+        // Próximo clipe (outro arquivo ou outro ponto): pouco antes da hora, decodifica os primeiros quadros numa tira
+        // (ver acima) e fica "quente" no ponto de entrada.
         const lead = c.start - t;
-        const warm = this.lite && this.playing && lead > 0 && lead < 0.7 && entry.primed && !el.seeking && el.readyState >= 2 && !this.continuesFrom(p, c);
-        if (warm) {
+        const comingUp = this.lite && this.playing && lead > 0 && lead < 1.8 && entry.primed && !c.curve && !this.continuesFrom(p, c);
+        const useStrip = comingUp && this.stripsOn && this.canStrip(entry, m);
+        if (useStrip && !entry.capturing && !el.seeking && el.readyState >= 2 && !(entry.strip && Math.abs(entry.strip.start - c.in) < 0.02)) this.captureStrip(entry, c, c.in, 'next');
+        if (comingUp && !useStrip && lead < this.warmLead && !el.seeking && el.readyState >= 2) {
+          // Sem tira (original pesado): o próximo clipe começa a rodar em câmera lenta, mudo, pouco antes da hora.
           if (el.paused) {
-            el.playbackRate = 0.0625;
+            el.playbackRate = this.warmRate;
             el.play().catch(() => {});
           }
-        } else {
+        } else if (comingUp) {
+          if (!entry.capturing) this.heat(el);
+        } else if (!entry.capturing) {
           if (!el.paused) el.pause();
           if (entry.ael && !entry.ael.paused) entry.ael.pause();
         }
         // Deixa o primeiro quadro pronto para não travar na entrada do clipe.
-        if (t < c.start && !entry.primed && el.readyState >= 1) {
+        if (t < c.start && !entry.primed && !entry.capturing && el.readyState >= 1) {
           el.currentTime = c.in;
           entry.primed = true;
         }
         continue;
       }
       entry.primed = false;
+      if (entry.capturing) continue; // está sendo lido para a tira de quadros: não mexe (o desenho usa o quadro guardado)
+      const target0 = sourceAt(c, t - c.start);
+      if (!entry.wasActive) {
+        entry.wasActive = true;
+        // Voltou a andar (play ou entrada do clipe): rampa = relógio livre + quadros da tira até o vídeo emparelhar.
+        if (this.lite && this.playing && !c.curve) {
+          entry.ramp = nowMs;
+          entry.vf0 = entry.vf || 0;
+          if (!entry.strip || Math.abs(entry.strip.start - target0) > 0.04) this.dropStrip(entry);
+        }
+      }
       // Vídeo ainda buscando/carregando o quadro: continua desenhando até ele chegar.
       if ((el.seeking || el.readyState < 2) && !el.error) this.invalidate(150);
       const target = sourceAt(c, t - c.start);
@@ -607,7 +772,7 @@ class Engine {
         const loud = vol > 0.001;
         const tol = !this.lite ? 0.3 : isMaster ? 0.6 : loud ? 0.15 : 0.6;
         const nudge = this.lite && !isMaster;
-        const boost = isMaster && this.catchUp && !c.curve ? Math.max(0, target - el.currentTime) : 0;
+        const boost = entry.ramp && !c.curve ? Math.max(0, target - el.currentTime) : 0;
         this.sync(el, target, speed, keepPitch, tol, nudge, boost);
         if (entry.ael) this.sync(entry.ael, target, speed, keepPitch, tol, nudge);
       }
@@ -621,17 +786,19 @@ class Engine {
         entry.lastCT = el.currentTime;
         this.mSeekNow = (el.seeking || el.readyState < 2) && !el.error;
         if (this.startHold && (entry.live || this.heldMs >= 2500)) this.startHold = false;
-        // Começo instantâneo: o relógio anda sozinho enquanto o vídeo liga e o alcança (ver play()). Termina quando
-        // o vídeo emparelha, passa de 1,5 s, ou se ele nem estava pronto/ficou muito para trás (aí volta a esperar).
-        if (this.catchUp) {
+        // Rampa (começo do play ou entrada do clipe): o relógio anda sozinho enquanto o vídeo liga e o alcança. Termina
+        // quando o vídeo já apresentou quadros e está no ponto certo, passa de 1,2 s, ou se ele nem estava pronto.
+        if (entry.ramp) {
           const lag = target - el.currentTime;
           const notReady = (el.seeking || el.readyState < 2) && !el.error;
-          if (notReady || lag > 1 || nowMs - this.catchStart > 1500 || (entry.live && lag < 0.03)) {
-            this.catchUp = false;
+          const presented = (entry.vf || 0) - (entry.vf0 || 0) >= 2;
+          if (notReady || lag > 1 || nowMs - entry.ramp > 1200 || (presented && lag < 0.04)) {
+            entry.ramp = 0;
+            this.dropStrip(entry);
             if (entry.live && !notReady && Math.abs(lag) < 0.15) entry.snapped = true; // já está colado: o relógio só o acompanha, sem pulo
           }
         }
-        if (this.catchUp) {
+        if (entry.ramp) {
           // relógio livre
         } else if (((el.seeking || el.readyState < 2) && !el.error) || (!entry.live && !el.error)) {
           // Ainda não está rodando (começando a tocar, buscando ou carregando): a linha do tempo espera.
@@ -666,7 +833,8 @@ class Engine {
       // Só desenha quando chegou quadro novo do vídeo (ou, sem vídeo/sem suporte, no ritmo máximo).
       const since = nowMs - this.lastDrawAt;
       const minGap = (1000 / (this.maxFps || 30)) * 0.8;
-      const fresh = this.rvfc && hasMaster ? this.frameFlag || since > 120 : true;
+      const ramping = [...this.entries.values()].some((e) => e.ramp && e.strip);
+      const fresh = this.rvfc && hasMaster && !ramping ? this.frameFlag || since > 38 : true;
       if (!fresh || since < minGap) return;
       this.frameFlag = false;
       this.lastDrawAt = nowMs;
@@ -704,7 +872,13 @@ class Engine {
           if (!entry) continue;
           // Durante uma busca (arrastar a barra, mudar velocidade) o vídeo fica sem quadro
           // por um instante; desenha o último quadro guardado para o player não piscar preto.
-          if (entry.el.readyState >= 2) {
+          if (entry.capturing) {
+            if (entry.snap) src = entry.snap;
+            else continue;
+          } else if (entry.ramp && entry.strip) {
+            const i = Math.round((sourceAt(c, t - c.start) - entry.strip.start) / entry.strip.dt);
+            src = entry.strip.bitmaps[Math.max(0, Math.min(entry.strip.bitmaps.length - 1, i))];
+          } else if (entry.el.readyState >= 2) {
             src = entry.el;
             if (!this.lite || !this.playing) this.keepFrame(entry);
           } else if (entry.snap) src = entry.snap;
