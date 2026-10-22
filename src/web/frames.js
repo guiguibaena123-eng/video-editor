@@ -6,23 +6,26 @@ import { createFile, MP4BoxBuffer, DataStream, Endianness } from 'mp4box';
 
 // Dá para tocar o ORIGINAL direto, sem a cópia leve? (H.264 de até Full HD cujos grupos de quadros são curtos: buscar
 // decodifica poucos quadros.) Vídeo mais pesado, em outro codec ou com grupos longos continua usando a cópia leve.
-export const playsDirect = (src) => !!src && src.gop <= (src.w * src.h > 1280 * 736 ? 48 : 90);
+// (4K e HEVC também abrem aqui — são o último recurso quando a cópia leve não pôde ser feita —, mas nunca tocam direto
+// por escolha: isso fica só para H.264 até Full HD.)
+export const playsDirect = (src) => !!src && src.avc && src.w * src.h <= MAX_DIRECT_PIXELS && src.gop <= (src.w * src.h > 1280 * 736 ? 48 : 90);
 
 export const framesSupported = () => typeof VideoDecoder !== 'undefined' && typeof EncodedVideoChunk !== 'undefined' && typeof VideoFrame !== 'undefined';
 
 const BLOCK = 24; // amostras lidas do arquivo de uma vez
 const MAX_GOP = 90; // grupo de quadros maior que isso: buscar custa demais, o vídeo fica no <video>
-const MAX_PIXELS = 1920 * 1088;
+const MAX_DIRECT_PIXELS = 1920 * 1088;
+const MAX_PIXELS = 3840 * 2176; // 4K: o decodificador do aparelho dá conta; o de software, não (ver step())
 
 // Decodificador do aparelho (hardware) é bem mais rápido, mas em alguns aparelhos demora ~500 ms para começar depois de
 // uma busca. Se isso acontecer, passamos a usar o de software (previsível) e lembramos — separado para vídeo pequeno
 // (a cópia leve de 540p: ~4 ms por quadro) e grande (Full HD: ~14 ms por quadro, só vale se o de hardware for pior).
-const soft = { small: false, big: false };
+const soft = { small: false, big: false, huge: false }; // 'huge' (4K) nunca vai para software: seria pior
 try {
   soft.small = localStorage.getItem('ve.fpSoft.small') === '1';
   soft.big = localStorage.getItem('ve.fpSoft.big') === '1';
 } catch {}
-const sizeClass = (src) => (src.w * src.h <= 600 * 1000 ? 'small' : 'big');
+const sizeClass = (src) => (src.w * src.h <= 600 * 1000 ? 'small' : src.w * src.h > MAX_DIRECT_PIXELS ? 'huge' : 'big');
 function goSoft(src) {
   const k = sizeClass(src);
   soft[k] = true;
@@ -70,7 +73,8 @@ async function load(blob) {
   if (!info) throw new Error('índice do vídeo não encontrado');
   const vt = info.videoTracks[0];
   if (!vt) throw new Error('sem trilha de vídeo');
-  if (!/^(avc1|avc3)/.test(vt.codec)) throw new Error('codec ' + vt.codec + ' fica com o <video>');
+  const avc = /^(avc1|avc3)/.test(vt.codec);
+  if (!avc && !/^(hvc1|hev1)/.test(vt.codec)) throw new Error('codec ' + vt.codec + ' fica com o <video>');
   const trak = file.getTrackById(vt.id);
   const samples = trak.samples;
   const n = samples?.length || 0;
@@ -129,8 +133,9 @@ async function load(blob) {
     need = order;
   }
 
-  const box = trak.mdia.minf.stbl.stsd.entries[0].avcC;
-  if (!box) throw new Error('sem avcC');
+  const entry = trak.mdia.minf.stbl.stsd.entries[0];
+  const box = avc ? entry.avcC : entry.hvcC;
+  if (!box) throw new Error('sem configuração do codec');
   const s = new DataStream(undefined, 0, Endianness.BIG_ENDIAN);
   box.write(s);
   const description = new Uint8Array(s.buffer, 8);
@@ -140,7 +145,7 @@ async function load(blob) {
 
   const swap = rot === 90 || rot === 270;
   const duration = (pts[n - 1] + dur[order[n - 1]]) / 1e6;
-  return new Source(blob, { n, cts: ctsDec, pts, order, need, dur, off, sz, sync, w, h, dw: swap ? h : w, dh: swap ? w : h, rot, reorder, config, gop, duration });
+  return new Source(blob, { n, cts: ctsDec, pts, order, need, dur, off, sz, sync, w, h, dw: swap ? h : w, dh: swap ? w : h, rot, reorder, config, gop, duration, avc });
 }
 
 class Source {
@@ -366,7 +371,7 @@ export class FramePlayer {
     if (this.dead || this.failed) return false;
     const s = this.src;
     const target = s.idxAt(us);
-    if (this.waiting && !soft[sizeClass(s)] && !globalThis.__FP_HW && performance.now() - this.waiting > 220) {
+    if (this.waiting && sizeClass(s) !== 'huge' && !soft[sizeClass(s)] && !globalThis.__FP_HW && performance.now() - this.waiting > 220) {
       // O decodificador de hardware deste aparelho está lento para começar: usa o de software daqui em diante.
       goSoft(s);
       this.dec.close?.();

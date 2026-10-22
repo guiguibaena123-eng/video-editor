@@ -45,7 +45,7 @@ export default function Diag({ onClose }) {
         [
           `${engine.playing ? 'TOCANDO' : 'parado'} · t=${t.toFixed(2)} · ${engine.lite ? 'leve' : 'completo'}`,
           `quadros do vídeo/s ${((engine.stats.rvfc - prev.current.rvfc + decNow - prev.current.dec) / dt).toFixed(0)} · desenhos/s ${((draws.current - prev.current.draws) / dt).toFixed(0)} · tempo/s ${((ticks - prev.current.ticks) / dt).toFixed(0)}`,
-          `play() chamado ${engine.stats.plays}x · RECUSADO ${engine.stats.rejects}x ${engine.stats.lastErr}`,
+          `play() chamado ${engine.stats.plays}x · RECUSADO ${engine.stats.rejects}x ${engine.stats.lastErr || ""} · som: pulos ${engine.stats.resyncs || 0}, esperas ${engine.stats.waits || 0}`,
           `qualidade ${s.previewQuality} · escala ${s.autoScale}${engine.audioLead != null ? ` · atraso do som ${Math.round(engine.audioLead * 1000)} ms` : ''}`,
           ...rows,
           ua,

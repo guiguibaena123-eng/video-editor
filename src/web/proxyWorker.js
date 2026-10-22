@@ -39,7 +39,6 @@ function audioSpecificConfig(file, trackId) {
 }
 
 async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 6 }) {
-  if (blob.size > 400 * 1024 * 1024) throw new Error('arquivo grande demais para a prévia leve');
   const file = createFile();
   let info = null;
   let failed = null;
@@ -184,10 +183,18 @@ async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 6 }) {
     flushAudio();
   };
 
+  // Arquivos grandes (4K de minutos): solta da memória o que o mp4box já entregou, senão ele guarda o arquivo inteiro.
+  const free = () => {
+    try {
+      file.releaseUsedSamples?.(vt.id, got);
+    } catch {}
+  };
   await pump();
+  free();
   while (await feed()) {
     if (failed) throw failed;
     await pump();
+    free();
   }
   file.flush();
   // O mp4box entrega as amostras de forma assíncrona: espera chegarem todas (ou parar de chegar).

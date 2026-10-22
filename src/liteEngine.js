@@ -146,6 +146,7 @@ export class LiteEngine extends Engine {
     el.src = mediaUrl(e.srcPath);
     el.load?.();
     const setLive = (v) => () => void ((e.live = v), v || (e.snapped = false));
+    el.addEventListener('waiting', () => this.playing && (this.stats.waits = (this.stats.waits || 0) + 1));
     el.addEventListener('playing', setLive(true));
     for (const ev of ['pause', 'waiting', 'seeking', 'ended', 'emptied']) el.addEventListener(ev, setLive(false));
     el.addEventListener('seeked', this.wake);
@@ -579,6 +580,7 @@ export class LiteEngine extends Engine {
     if (Math.abs(drift) > tol) {
       el.currentTime = target + (el.playbackRate > 0 ? 0.03 : 0);
       el.__heat = null;
+      this.stats.resyncs = (this.stats.resyncs || 0) + 1;
       return;
     }
     // Quente (taxa 0) até agora: passa a andar, um pouco mais rápido por um instante (o som leva ~50 ms para pegar o ritmo).

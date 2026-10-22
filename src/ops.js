@@ -615,6 +615,7 @@ function startMediaCache(media, wantProxy) {
       })
       .catch((err) => {
         setCache(media.id, { proxyState: 'failed', proxyError: String(err?.message || err).slice(0, 300) });
+        useStore.getState().notify(`Não consegui preparar a prévia leve de “${media.name}” (${cleanError(err).slice(0, 80)}). Ele pode ficar pesado no player.`, 'error');
         if (window.api.proxyThumbs) startThumbs(media.path);
       });
   }
