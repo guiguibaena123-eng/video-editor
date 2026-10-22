@@ -123,6 +123,13 @@ export class LiteEngine extends Engine {
     return (el.__gain = super.route(el));
   }
 
+  // O "esquentar" deixa o elemento mudo; pelo caminho do WebAudio (volume > 100 %, fade no iPhone) o volume não mexe no
+  // mudo, e o clipe tocava em silêncio. Tocando, o mudo só vale se o volume for zero.
+  setVolume(el, gainNode, vol) {
+    super.setVolume(el, gainNode, vol);
+    if (gainNode && this.playing && el.muted && vol > 0.001) el.muted = false;
+  }
+
   makeAudio(e, m) {
     const el = this.takeAudio();
     e.gain = el.__gain || null;
@@ -550,8 +557,9 @@ export class LiteEngine extends Engine {
     // Quente (taxa 0) até agora: passa a andar, um pouco mais rápido por um instante (o som leva ~50 ms para pegar o ritmo).
     if (el.playbackRate === 0) e.boostUntil = now + 350;
     let rate = base;
-    if (now < (e.boostUntil || 0)) rate *= 1.15;
-    if (el.playbackRate > 0 && Math.abs(drift) > 0.012) rate *= 1 - Math.max(-0.25, Math.min(0.25, drift * 2.8));
+    if (now < (e.boostUntil || 0)) rate *= 1.1;
+    // correção suave (no máximo ±10 %): taxas muito diferentes de 1 fazem o som "chiar" nos celulares
+    if (el.playbackRate > 0 && Math.abs(drift) > 0.02) rate *= 1 - Math.max(-0.1, Math.min(0.1, drift * 2));
     if (Math.abs(el.playbackRate - rate) > 5e-4) el.playbackRate = rate;
   }
 
