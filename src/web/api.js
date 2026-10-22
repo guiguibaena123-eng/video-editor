@@ -3,6 +3,7 @@
 import { dbPut, dbGet, dbDelete, dbAll, dbKeys } from './db';
 import { registerBlob, webBlob, webUrl, webName, webId, isWebPath, makeWebPath, prewarmVideo } from './registry';
 import { useStore } from '../store';
+import { makePreviewProxy } from './proxy';
 import { engine } from '../engine';
 
 const IMAGE_RE = /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i;
@@ -236,7 +237,7 @@ async function releaseMedia(data) {
 async function collectGarbage() {
   const used = new Set();
   for (const [, rec] of await dbAll('projects')) for (const m of rec.data?.media || []) if (isWebPath(m.path)) used.add(webId(m.path));
-  for (const id of await dbKeys('files')) if (!used.has(id)) await dbDelete('files', id);
+  for (const id of await dbKeys('files')) if (!used.has(String(id).replace(/-p$/, ''))) await dbDelete('files', id); // "-p" = prévia leve do arquivo
 }
 
 const libId = (file) => String(file).replace(/^lib:/, '');
@@ -313,7 +314,8 @@ export function installWebApi() {
     onReverseProgress: () => () => {},
     showItem: () => {},
     saveProject: async () => null,
-    previewProxy: unsupported('Proxy de prévia'),
+    previewProxy: makePreviewProxy,
+    proxyMinSide: 1000, // no celular qualquer vídeo acima de HD ganha prévia leve
     audioProxy: unsupported('Efeito de áudio'),
     extractFrame: unsupported('Congelar quadro'),
     stabilizeMedia: unsupported('Estabilização'),

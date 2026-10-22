@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useStore, projectDuration, clipDur, ASPECTS, DEFAULT_TRANSFORM } from '../store';
+import { useStore, projectDuration, clipDur, ASPECTS, DEFAULT_TRANSFORM, setPreviewQuality } from '../store';
 import { engine, IOS_LIKE } from '../engine';
 import { transformAt, valueAt, applyProp, hasKeyframes, findKey, setKeyframe, removeKeyframe, keyframeTimes, KF_PROPS, EASES } from '../keyframes';
 import { addMediaToTimeline, deleteSelection, duplicateSelection, goHome, seek, setClipSpeed, setProjectFormat, splitAtPlayhead } from '../ops';
@@ -80,6 +80,7 @@ function TopBar() {
   const name = useStore((s) => s.project.name);
   const saving = useStore((s) => s.saving);
   const dirty = useStore((s) => s.dirty);
+  const prox = useStore((s) => Object.values(s.cache).find((c) => c?.proxyState === 'working'));
   const rename = async () => {
     const n = await askText({ title: 'Nome do projeto', value: name, confirm: 'Salvar' });
     if (n) useStore.getState().commit((p) => void (p.name = n.slice(0, 80)));
@@ -93,7 +94,7 @@ function TopBar() {
       </button>
       <button className="mtop-name" onClick={rename}>
         <b>{name}</b>
-        <small>{saving ? 'Salvando…' : dirty ? 'Alterações pendentes' : 'Salvo no aparelho'}</small>
+        <small>{prox ? `Preparando prévia leve ${Math.round((prox.proxyProgress || 0) * 100)}%` : saving ? 'Salvando…' : dirty ? 'Alterações pendentes' : 'Salvo no aparelho'}</small>
       </button>
       <button className="m-pill" onClick={() => useStore.getState().notify('A exportação do celular está sendo construída (próxima etapa).')}>
         <Icon name="export" size={16} strokeWidth={2.2} /> Exportar
@@ -324,6 +325,7 @@ const FPS_LIST = [24, 25, 30, 60];
 
 function FormatSheet() {
   const settings = useStore((s) => s.project.settings);
+  const quality = useStore((s) => s.previewQuality);
   return (
     <>
       <div className="mformats wrap">
@@ -338,6 +340,16 @@ function FormatSheet() {
           );
         })}
       </div>
+      <p className="msec">Prévia no player</p>
+      <div className="mchips">
+        <button className={'mchip' + (quality !== 'high' ? ' on' : '')} onClick={() => setPreviewQuality('auto')}>
+          Leve (recomendado)
+        </button>
+        <button className={'mchip' + (quality === 'high' ? ' on' : '')} onClick={() => setPreviewQuality('high')}>
+          Original
+        </button>
+      </div>
+      <p className="mhint">A prévia leve toca uma cópia pequena do vídeo, feita sozinha no aparelho. A exportação sempre usa o vídeo original.</p>
       <p className="msec">Quadros por segundo</p>
       <div className="mchips">
         {FPS_LIST.map((f) => (

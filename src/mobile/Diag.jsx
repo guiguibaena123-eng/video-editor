@@ -30,8 +30,9 @@ export default function Diag({ onClose }) {
         const m = s.media.find((x) => x.id === c.mediaId);
         if (!e || !m) continue;
         const q = e.el.getVideoPlaybackQuality?.();
+        const pc = s.cache[m.id];
         const drift = Math.round((e.el.currentTime - (c.in + (t - c.start) * (c.speed || 1))) * 1000);
-        rows.push(`${m.type[0]} ${m.name.slice(0, 14)} desvio ${drift} ms · ${e.el.paused ? 'PARADO' : 'tocando'}${e.el.seeking ? ' buscando' : ''} · estado ${e.el.readyState}${e.live ? ' · live' : ''}${e.gain ? ' · WebAudio' : ''}${q ? ` · perdidos ${q.droppedVideoFrames}/${q.totalVideoFrames}` : ''}`);
+        rows.push(`${m.type[0]} ${m.name.slice(0, 14)} desvio ${drift} ms · ${e.el.paused ? 'PARADO' : 'tocando'}${e.el.seeking ? ' buscando' : ''} · estado ${e.el.readyState}${e.live ? ' · live' : ''}${e.gain ? ' · WebAudio' : ''}${/-p\/previa\.mp4$/.test(e.srcPath || '') ? ' · PRÉVIA LEVE' : ' · original'}${q ? ` · perdidos ${q.droppedVideoFrames}/${q.totalVideoFrames}` : ''}${pc?.proxyState ? ` · cópia leve: ${pc.proxyState}${pc.proxyError ? ' (' + pc.proxyError.slice(0, 60) + ')' : ''}` : ''}`);
       }
       const ua = navigator.userAgent.slice(12, 90);
       setText(

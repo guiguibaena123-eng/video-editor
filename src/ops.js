@@ -572,12 +572,12 @@ export function loadMediaCache(media) {
     window.api.waveform(media.path, media.duration).then((wave) => setCache(media.id, { wave })).catch(() => {});
   }
   // Vídeo grande (2K/4K): o player usa uma cópia leve gerada em segundo plano; a exportação usa o original.
-  if (media.type === 'video' && Math.max(media.width, media.height) > PROXY_MIN_SIDE) {
+  if (media.type === 'video' && Math.max(media.width, media.height) > (window.api.proxyMinSide ?? PROXY_MIN_SIDE)) {
     setCache(media.id, { proxyState: 'working' });
     window.api
-      .previewProxy(media.path, media.hasAudio)
+      .previewProxy(media.path, media.hasAudio, (f) => setCache(media.id, { proxyProgress: f }), media.duration)
       .then((proxy) => setCache(media.id, { proxy, proxyState: 'ready' }))
-      .catch(() => setCache(media.id, { proxyState: 'failed' }));
+      .catch((err) => setCache(media.id, { proxyState: 'failed', proxyError: String(err?.message || err).slice(0, 300) }));
   }
 }
 

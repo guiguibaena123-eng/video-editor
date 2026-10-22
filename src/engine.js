@@ -356,7 +356,8 @@ class Engine {
     // Vídeo grande toca pelo proxy leve (menos na qualidade "Alta"); a exportação nunca usa o proxy.
     const s = useStore.getState();
     const want = s.previewQuality !== 'high' && s.cache[media.id]?.proxy ? s.cache[media.id].proxy : media.path;
-    if (entry && entry.srcPath !== want) {
+    // (Só parado: trocar a fonte no meio da reprodução cortaria a imagem e o som; a troca espera uma pausa.)
+    if (entry && entry.srcPath !== want && !this.playing) {
       // Proxy ficou pronto (ou a qualidade mudou): troca a fonte; o último quadro guardado cobre a troca.
       this.keepFrame(entry);
       entry.srcPath = want;
