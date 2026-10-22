@@ -38,7 +38,7 @@ export default function Diag({ onClose }) {
         const el = e.el;
         const src = /-p\/previa\.mp4$/.test(e.srcPath || '') ? ' · PRÉVIA LEVE' : ' · original';
         const vis = e.fp ? ` · imagem: quadros${e.fp.failed ? ' FALHOU ' + String(e.fp.failed.message || e.fp.failed).slice(0, 40) : ''} (${decoderMode(e.fp.src)}, ${e.fp.stats.decoded} quadros, ${e.fp.stats.resets} buscas${e.fp.src.reorder ? ', B-frames' : ''}${e.fp.src.rot ? ', girado ' + e.fp.src.rot + '°' : ''})` : e.vel ? ' · imagem: <video> mudo' : m.type === 'video' ? ' · imagem: abrindo' : '';
-        rows.push(`${m.type[0]} ${m.name.slice(0, 14)}${media ? ` desvio ${drift} ms · ${el ? (el.paused ? 'som PARADO' : 'som tocando') : ''}${el?.seeking ? ' buscando' : ''} · estado ${el?.readyState ?? '-'}${e.live ? ' · live' : ''}${e.gain ? ' · WebAudio' : ''}` : ''}${src}${vis}${q ? ` · perdidos ${q.droppedVideoFrames}/${q.totalVideoFrames}` : ''}${pc?.proxyState ? ` · cópia leve: ${pc.proxyState}${pc.proxyError ? ' (' + pc.proxyError.slice(0, 60) + ')' : ''}` : ''}`);
+        rows.push(`${m.type[0]} ${m.name.slice(0, 14)}${media ? ` desvio ${drift} ms · ${el ? (el.paused ? 'som PARADO' : 'som tocando') : ''}${el?.seeking ? ' buscando' : ''} · estado ${el?.readyState ?? '-'}${e.live ? ' · live' : ''}${e.gain ? ' · WebAudio' : ''}` : ''}${src}${vis}${q ? ` · perdidos ${q.droppedVideoFrames}/${q.totalVideoFrames}` : ''}${pc?.proxyState ? ` · cópia leve: ${pc.proxyState}${pc.proxyError ? ' (' + pc.proxyError.slice(0, 220) + ')' : ''}` : ''}`);
       }
       const decNow = [...engine.entries.values()].reduce((a, e) => a + (e.fp ? e.fp.stats.decoded : 0), 0);
       const ua = navigator.userAgent.slice(12, 90);

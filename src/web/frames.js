@@ -14,6 +14,7 @@ export const framesSupported = () => typeof VideoDecoder !== 'undefined' && type
 
 const BLOCK = 24; // amostras lidas do arquivo de uma vez
 const MAX_GOP = 90; // grupo de quadros maior que isso: buscar custa demais, o vídeo fica no <video>
+const ROT_MAX = 1280; // maior lado do quadro girado (o palco do celular tem ~540 px)
 const MAX_DIRECT_PIXELS = 1920 * 1088;
 const MAX_PIXELS = 3840 * 2176; // 4K: o decodificador do aparelho dá conta; o de software, não (ver step())
 
@@ -262,8 +263,9 @@ export class FramePlayer {
   stash() {
     const img = this.upright();
     if (!img) return;
-    const w = img.displayWidth || img.width;
-    const h = img.displayHeight || img.height;
+    const k = Math.min(1, ROT_MAX / Math.max(img.displayWidth || img.width, img.displayHeight || img.height));
+    const w = Math.max(2, Math.round((img.displayWidth || img.width) * k));
+    const h = Math.max(2, Math.round((img.displayHeight || img.height) * k));
     let c = this.hold;
     if (!c) c = this.hold = document.createElement('canvas');
     if (c.width !== w || c.height !== h) {
@@ -282,17 +284,21 @@ export class FramePlayer {
     if (!f || !this.src.rot) return f;
     if (this.rotTs !== this.curTs) {
       const { dw, dh, rot } = this.src;
+      // Girar um quadro 4K em tamanho cheio custa (cópia enorme por quadro, no iPhone ~100 ms): gira já reduzido.
+      const k = Math.min(1, ROT_MAX / Math.max(dw, dh));
+      const cw = Math.max(2, Math.round(dw * k));
+      const ch = Math.max(2, Math.round(dh * k));
       let c = this.rotC;
       if (!c) c = this.rotC = document.createElement('canvas');
-      if (c.width !== dw || c.height !== dh) {
-        c.width = dw;
-        c.height = dh;
+      if (c.width !== cw || c.height !== ch) {
+        c.width = cw;
+        c.height = ch;
       }
       const g = c.getContext('2d');
       g.save();
-      g.translate(dw / 2, dh / 2);
+      g.translate(cw / 2, ch / 2);
       g.rotate((rot * Math.PI) / 180);
-      g.drawImage(f, -f.displayWidth / 2, -f.displayHeight / 2, f.displayWidth, f.displayHeight);
+      g.drawImage(f, (-f.displayWidth * k) / 2, (-f.displayHeight * k) / 2, f.displayWidth * k, f.displayHeight * k);
       g.restore();
       this.rotTs = this.curTs;
     }

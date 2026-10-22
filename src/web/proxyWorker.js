@@ -24,8 +24,13 @@ self.onmessage = (e) => {
   }
 };
 
+// (Alguns .mov do iPhone não respondem a getTrackById: procura a trilha direto na lista do arquivo.)
+function trackOf(file, id) {
+  return file.getTrackById(id) || file.moov?.traks?.find((t) => t.tkhd?.track_id === id) || null;
+}
+
 function videoDescription(file, trackId) {
-  const entry = file.getTrackById(trackId).mdia.minf.stbl.stsd.entries[0];
+  const entry = trackOf(file, trackId).mdia.minf.stbl.stsd.entries[0];
   const box = entry.avcC || entry.hvcC;
   if (!box) throw new Error('codec de vídeo sem configuração conhecida');
   const s = new DataStream(undefined, 0, Endianness.BIG_ENDIAN);
@@ -33,9 +38,16 @@ function videoDescription(file, trackId) {
   return new Uint8Array(s.buffer, 8); // pula o cabeçalho da caixa (tamanho + nome)
 }
 
-function audioSpecificConfig(file, trackId) {
-  const entry = file.getTrackById(trackId).mdia.minf.stbl.stsd.entries[0];
-  return entry.esds.esd.descs[0].descs[0].data;
+function audioSpecificConfig(file, trackId, rate, channels) {
+  try {
+    const entry = trackOf(file, trackId).mdia.minf.stbl.stsd.entries[0];
+    return entry.esds.esd.descs[0].descs[0].data;
+  } catch {
+    // Sem a configuração no arquivo: monta a de AAC-LC (2 bytes) com a taxa e os canais conhecidos.
+    const rates = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
+    const idx = Math.max(0, rates.indexOf(rate));
+    return new Uint8Array([(2 << 3) | (idx >> 1), ((idx & 1) << 7) | ((channels || 2) << 3)]);
+  }
 }
 
 async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 6 }) {
@@ -102,6 +114,7 @@ async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 6 }) {
   const encSupport = await VideoEncoder.isConfigSupported(encCfg);
   if (!encSupport.supported) throw new Error('este aparelho não codifica H.264');
 
+  const audioDesc = at ? audioSpecificConfig(file, at.id, at.audio.sample_rate, at.audio.channel_count) : null;
   const audioCfg = at ? { codec: 'aac', numberOfChannels: at.audio.channel_count, sampleRate: at.audio.sample_rate } : undefined;
   const target = new ArrayBufferTarget();
   const muxer = new Muxer({ target, video: { codec: 'avc', width: W, height: H }, audio: audioCfg, fastStart: 'in-memory', firstTimestampBehavior: 'cross-track-offset' });
@@ -161,7 +174,7 @@ async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 6 }) {
     while (aq.length) {
       const s = aq.shift();
       const us = 1e6 / s.timescale;
-      muxer.addAudioChunkRaw(s.data, s.is_sync ? 'key' : 'delta', Math.round(s.cts * us), Math.round(s.duration * us), { decoderConfig: { codec: at.codec, numberOfChannels: at.audio.channel_count, sampleRate: at.audio.sample_rate, description: audioSpecificConfig(file, at.id) } });
+      muxer.addAudioChunkRaw(s.data, s.is_sync ? 'key' : 'delta', Math.round(s.cts * us), Math.round(s.duration * us), { decoderConfig: { codec: at.codec, numberOfChannels: at.audio.channel_count, sampleRate: at.audio.sample_rate, description: audioDesc } });
     }
   };
   const pump = async () => {
