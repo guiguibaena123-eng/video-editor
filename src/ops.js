@@ -565,7 +565,7 @@ export function loadMediaCache(media) {
     window.api.thumbnails(media.path, media.duration, media.type).then((thumbs) => setCache(media.id, { thumbs })).catch(() => {});
   }
   if (media.hasAudio) {
-    window.api.waveform(media.path).then((wave) => setCache(media.id, { wave })).catch(() => {});
+    window.api.waveform(media.path, media.duration).then((wave) => setCache(media.id, { wave })).catch(() => {});
   }
   // Vídeo grande (2K/4K): o player usa uma cópia leve gerada em segundo plano; a exportação usa o original.
   if (media.type === 'video' && Math.max(media.width, media.height) > PROXY_MIN_SIDE) {

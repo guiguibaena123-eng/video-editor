@@ -2,6 +2,8 @@
 // biblioteca de projetos (IndexedDB). Assim o motor, a store e as ops do PC rodam sem mudanças no celular.
 import { dbPut, dbGet, dbDelete, dbAll, dbKeys } from './db';
 import { registerBlob, webBlob, webUrl, webName, webId, isWebPath, makeWebPath } from './registry';
+import { useStore } from '../store';
+import { engine } from '../engine';
 
 const IMAGE_RE = /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i;
 const AUDIO_RE = /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac|wma)$/i;
@@ -18,18 +20,46 @@ export const typeOfFile = (f) => {
   return 'video';
 };
 
-// Guarda os arquivos escolhidos na galeria e devolve os caminhos "web:".
+// Gravações no aparelho que ainda estão acontecendo em segundo plano.
+const pendingWrites = new Set();
+export const flushStorage = () => Promise.allSettled([...pendingWrites]);
+
+// Aceita os arquivos escolhidos na galeria e devolve os caminhos "web:" na hora: o arquivo já pode ser usado
+// direto da galeria. A cópia para o armazenamento do app (que pode levar vários segundos em vídeo grande) roda
+// em segundo plano; salvar o projeto espera ela terminar.
 export async function storeFiles(fileList) {
   const paths = [];
   for (const f of fileList) {
     const id = rid();
     const path = makeWebPath(id, f.name || 'arquivo');
-    await dbPut('files', id, { blob: f, name: f.name, type: f.type, size: f.size });
     registerBlob(path, f);
+    const job = dbPut('files', id, { blob: f, name: f.name, type: f.type, size: f.size })
+      .catch((err) => useStore.getState().notify('Não foi possível guardar "' + (f.name || 'arquivo') + '" no aparelho (falta de espaço?): ' + String(err?.message || err), 'error'))
+      .finally(() => pendingWrites.delete(job));
+    pendingWrites.add(job);
     paths.push(path);
   }
   return paths;
 }
+
+// ---------- trabalho de fundo (miniaturas, onda) ----------
+// Um de cada vez e só quando o player está livre: o primeiro quadro aparece antes e tocar não trava.
+let bgChain = Promise.resolve();
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+async function playerFree(maxWait = 10000) {
+  const t0 = performance.now();
+  await sleepMs(150);
+  while (performance.now() - t0 < maxWait) {
+    const busy = useStore.getState().playing || [...engine.entries.values()].some((e) => e.el.readyState < 2 && !e.el.error);
+    if (!busy) return;
+    await sleepMs(250);
+  }
+}
+const background = (fn) => {
+  const p = bgChain.then(() => playerFree()).then(fn);
+  bgChain = p.catch(() => {});
+  return p;
+};
 
 function waitFor(el, ok, bad = 'error', ms = 20000) {
   return new Promise((resolve, reject) => {
@@ -114,6 +144,10 @@ async function probe(path) {
 const THUMB_H = 72;
 
 async function thumbnails(path, duration, type) {
+  return background(() => makeThumbnails(path, duration, type));
+}
+
+async function makeThumbnails(path, duration, type) {
   const url = webUrl(path);
   const c = document.createElement('canvas');
   const g = c.getContext('2d');
@@ -135,22 +169,30 @@ async function thumbnails(path, duration, type) {
   v.preload = 'auto';
   v.src = url;
   await waitFor(v, 'loadeddata');
-  const count = Math.max(1, Math.min(30, Math.ceil(duration / (duration > 90 ? 4 : 1.5))));
+  const count = Math.max(1, Math.min(20, Math.ceil(duration / (duration > 90 ? 5 : 2))));
   const interval = Math.max(duration / count, 0.05);
   const frames = [];
   for (let i = 0; i < count; i++) {
+    if (useStore.getState().playing) await playerFree(); // toca com prioridade; as miniaturas esperam
     v.currentTime = Math.min(Math.max(0, duration - 0.05), i * interval + interval / 2);
     await waitFor(v, 'seeked', 'error', 4000).catch(() => {});
     frames.push(shot(v, v.videoWidth || 16, v.videoHeight || 9));
+    await sleepMs(40); // respiro para o resto do app
   }
   v.removeAttribute('src');
   v.load();
   return { interval, frames };
 }
 
-async function waveform(path) {
+async function waveform(path, duration = 0) {
+  return background(() => makeWaveform(path, duration));
+}
+
+async function makeWaveform(path, duration) {
   const blob = webBlob(path);
-  if (!blob || blob.size > 160 * 1024 * 1024) throw new Error('Arquivo grande demais para a onda de áudio.');
+  // Decodificar o som inteiro ocupa muita memória (estéreo 44,1 kHz ≈ 350 KB/s) e lê o arquivo todo: só em
+  // arquivos de tamanho razoável. Vídeos grandes ficam sem onda no celular.
+  if (!blob || blob.size > 80 * 1024 * 1024 || duration > 330) throw new Error('Arquivo grande demais para a onda de áudio.');
   const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   const ctx = new AC(1, 44100, 44100);
   const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
@@ -174,17 +216,19 @@ async function waveform(path) {
 
 // Reabre os arquivos de mídia do projeto a partir do aparelho; o que sumiu fica marcado como ausente.
 async function releaseMedia(data) {
-  for (const m of data.media || []) {
-    if (!isWebPath(m.path)) {
-      m.missing = true;
-      continue;
-    }
-    const rec = await dbGet('files', webId(m.path));
-    if (rec?.blob) {
-      registerBlob(m.path, rec.blob);
-      m.missing = false;
-    } else m.missing = true;
-  }
+  await Promise.all(
+    (data.media || []).map(async (m) => {
+      if (!isWebPath(m.path)) {
+        m.missing = true;
+        return;
+      }
+      const rec = await dbGet('files', webId(m.path));
+      if (rec?.blob) {
+        registerBlob(m.path, rec.blob);
+        m.missing = false;
+      } else m.missing = true;
+    }),
+  );
 }
 
 // Apaga do aparelho os arquivos que nenhum projeto usa mais.
@@ -207,6 +251,7 @@ const library = {
   },
   async librarySave({ file, data, meta, thumb }) {
     const id = libId(file);
+    await flushStorage(); // a mídia tem de estar guardada antes do projeto que depende dela
     const old = await dbGet('projects', id);
     await dbPut('projects', id, { data, meta: { ...meta, modified: Date.now() }, thumb: thumb || old?.thumb || null });
     return file;
