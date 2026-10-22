@@ -31,6 +31,7 @@ class Engine {
   // quando, abre poucos vídeos ao mesmo tempo e tolera mais atraso antes de refazer uma busca.
   lite = false;
   maxFps = 0;
+  nextLead = 3; // perfil leve: quantos segundos antes o próximo clipe começa a ser preparado (vídeo carregado + tira de quadros)
   lastFrameAt = 0;
   snapTick = 0;
   lastTickMs = 0;
@@ -700,7 +701,7 @@ class Engine {
       const tr = trackById.get(c.trackId);
       if (!m || !tr || m.missing || m.type === 'image') continue;
       const end = clipEnd(c);
-      if (t < c.start - (this.lite ? 1.2 : 3) || t > end + 1) continue;
+      if (t < c.start - (this.lite ? this.nextLead : 3) || t > end + 1) continue;
       if (this.lite && t >= end && !this.entries.has(c.id)) continue; // já passou: não reabre
       near.add(c.id);
       const entry = this.getEntry(c, m);
@@ -729,7 +730,7 @@ class Engine {
         // Próximo clipe (outro arquivo ou outro ponto): pouco antes da hora, decodifica os primeiros quadros numa tira
         // (ver acima) e fica "quente" no ponto de entrada.
         const lead = c.start - t;
-        const comingUp = this.lite && this.playing && lead > 0 && lead < 1.8 && entry.primed && !c.curve && !this.continuesFrom(p, c);
+        const comingUp = this.lite && this.playing && lead > 0 && lead < Math.max(1.8, this.nextLead) && entry.primed && !c.curve && !this.continuesFrom(p, c);
         const useStrip = comingUp && this.stripsOn && this.canStrip(entry, m);
         if (useStrip && !entry.capturing && !el.seeking && el.readyState >= 2 && !(entry.strip && Math.abs(entry.strip.start - c.in) < 0.02)) this.captureStrip(entry, c, c.in, 'next');
         if (comingUp && !useStrip && lead < this.warmLead && !el.seeking && el.readyState >= 2) {
