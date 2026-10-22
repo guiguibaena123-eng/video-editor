@@ -614,10 +614,10 @@ export class Engine {
       const budget = 1000 / Math.min(this.lite && this.maxFps ? this.maxFps : 60, s.project.settings.fps || 30);
       if (this.emaInterval > budget * 1.4) this.slowFrames++;
       else this.slowFrames = Math.max(0, this.slowFrames - 1);
-      if (this.slowFrames > 40 && s.autoScale > (this.lite ? 0.65 : 0.4)) {
+      if (this.slowFrames > 40 && s.autoScale > (this.lite ? 0.55 : 0.4)) {
         this.slowFrames = 0;
         this.emaInterval = 0;
-        useStore.setState({ autoScale: Math.max(this.lite ? 0.65 : 0.4, +(s.autoScale * 0.8).toFixed(2)) });
+        useStore.setState({ autoScale: Math.max(this.lite ? 0.55 : 0.4, +(s.autoScale * 0.8).toFixed(2)) });
       }
     }
     this.lastLoop = now;

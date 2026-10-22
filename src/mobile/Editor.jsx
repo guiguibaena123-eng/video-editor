@@ -16,7 +16,7 @@ import { Sheet, Slider, Tool, askText, haptic } from './ui';
 import { pickFiles } from './files';
 import { importWithPrep } from './prep';
 
-const MAX_CANVAS_W = 720; // pixels reais do player no celular: o suficiente para uma tela pequena e bem mais leve
+const MAX_CANVAS_W = 540; // pixels reais do player no celular: nítido o bastante numa tela pequena e bem mais leve de desenhar
 
 export default function MEditor() {
   const [sheet, setSheet] = useState(null);
@@ -159,7 +159,7 @@ function Stage() {
   useEffect(() => {
     const c = canvasRef.current;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const cap = quality === 'high' ? Infinity : quality === 'low' ? 640 : quality === 'medium' ? 960 : theater ? 1280 : MAX_CANVAS_W;
+    const cap = quality === 'high' ? Infinity : quality === 'low' ? 400 : quality === 'medium' ? 720 : theater ? 960 : MAX_CANVAS_W;
     let k = Math.min(dpr, cap / Math.max(1, size.w));
     if (quality === 'auto') k *= autoScale;
     c.width = Math.max(2, Math.round(size.w * k));
