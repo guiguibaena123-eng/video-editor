@@ -35,7 +35,7 @@ class Engine {
   lastTickMs = 0;
   heldMs = 0;
   stalledPrev = false;
-  stats = { rejects: 0, lastErr: '', plays: 0, rvfc: 0, sync: 0 }; // para o painel de diagnóstico do celular
+  stats = { rejects: 0, lastErr: '', plays: 0, rvfc: 0, sync: 0, holds: [] }; // para o painel de diagnóstico do celular
   frameFlag = false; // chegou um quadro novo do vídeo (requestVideoFrameCallback)
   lastDrawAt = 0;
   drewNow = false;
@@ -83,9 +83,12 @@ class Engine {
   // No celular o som só passa pelo WebAudio quando precisa (volume acima de 100%, ou iPhone, onde o volume do
   // elemento não funciona): o caminho nativo toca junto com a imagem, sem o atraso extra do WebAudio.
   connect(entry, vol = 1) {
-    if (!this.audioCtx) return;
     // iPhone: o volume do elemento não funciona, mas em 100% (o normal) o som nativo é o mais colado na imagem.
     if (this.lite && !(vol > 1.001 || (IOS_LIKE && vol > 0.001 && vol < 0.999))) return;
+    if (!this.audioCtx) {
+      this.ensureAudio();
+      if (!this.audioCtx) return;
+    }
     if (!entry.gain) entry.gain = this.route(entry.el);
     if (entry.ael && !entry.again) entry.again = this.route(entry.ael);
   }
@@ -231,7 +234,7 @@ class Engine {
     const s = useStore.getState();
     const total = projectDuration(s.project);
     if (total <= 0) return;
-    this.ensureAudio();
+    if (!this.lite) this.ensureAudio(); // no celular o contexto de áudio só nasce se algum som precisar (volume > 100%...)
     const start = s.currentTime >= total - 0.01 ? 0 : s.currentTime;
     this.clock = { t0: start, wall0: performance.now() };
     this.lastTickMs = performance.now();
@@ -261,6 +264,7 @@ class Engine {
     this.stopAt = null;
     this.playing = false;
     for (const e of this.entries.values()) {
+      if (this.lite && e.el.readyState >= 2 && !e.snap) this.keepFrame(e); // quadro de apoio para buscas depois de parar
       e.el.pause();
       e.ael?.pause();
     }
@@ -308,7 +312,7 @@ class Engine {
           this.stats.rvfc++;
           if (!el.paused && !el.seeking) entry.live = true; // quadro novo apresentado: o vídeo está rodando
 
-          if (this.entries.get(clip.id)?.el === el) el.requestVideoFrameCallback(cb);
+          if (!entry.dead) el.requestVideoFrameCallback(cb);
         };
         el.requestVideoFrameCallback(cb);
       }
@@ -333,11 +337,33 @@ class Engine {
   dispose(clipId) {
     const e = this.entries.get(clipId);
     if (!e) return;
+    e.dead = true;
     this.setProxy(e, null);
     e.el.pause();
     e.el.removeAttribute('src');
     e.el.load();
     this.entries.delete(clipId);
+  }
+
+  // Clipe anterior que termina onde este começa, do mesmo arquivo, no mesmo ponto de origem e na mesma velocidade
+  // (um corte): dá para seguir tocando o MESMO elemento de vídeo, sem parar nem buscar.
+  continuesFrom(p, c) {
+    if (c.curve || c.kind) return null;
+    return p.clips.find((q) => q.id !== c.id && !q.kind && !q.curve && q.mediaId === c.mediaId && q.trackId === c.trackId && (q.speed || 1) === (c.speed || 1) && Math.abs(clipEnd(q) - c.start) < 0.08 && Math.abs(q.out - c.in) < 0.12);
+  }
+
+  adoptContinuations(p, t) {
+    for (const c of p.clips) {
+      if (c.kind || t < c.start || t >= clipEnd(c)) continue;
+      const prev = this.continuesFrom(p, c);
+      const pe = prev && this.entries.get(prev.id);
+      if (!pe || pe.el.paused || pe.el.seeking || pe.dead) continue;
+      if (this.entries.get(c.id) === pe) continue;
+      if (this.entries.has(c.id)) this.dispose(c.id);
+      this.entries.delete(prev.id);
+      this.entries.set(c.id, pe);
+      pe.primed = false;
+    }
   }
 
   requestDraw() {
@@ -443,6 +469,7 @@ class Engine {
     if (!this.lastTickMs) this.lastTickMs = nowMs;
     let stalled = false; // o vídeo mestre ainda não tem quadro: mantém na tela o último quadro bom
     let hasMaster = false; // já há um vídeo mestre do relógio neste quadro
+    if (this.lite && this.playing) this.adoptContinuations(p, t);
 
     for (const c of p.clips) {
       const m = mediaById.get(c.mediaId);
@@ -450,6 +477,7 @@ class Engine {
       if (!m || !tr || m.missing || m.type === 'image') continue;
       const end = clipEnd(c);
       if (t < c.start - (this.lite ? 1.2 : 3) || t > end + 1) continue;
+      if (this.lite && t >= end && !this.entries.has(c.id)) continue; // já passou: não reabre
       near.add(c.id);
       const entry = this.getEntry(c, m);
       const el = entry.el;
@@ -457,7 +485,7 @@ class Engine {
       const keepPitch = c.keepPitch !== false;
       const active = t >= c.start && t < end;
       const silent = tr.muted || tr.hidden || c.audioDetached || this.muteAll || !m.hasAudio;
-      const vol = silent ? 0 : valueAt(c, 'volume', t - c.start) * fadeGain(effectiveAudio(p, c), t - c.start, end - c.start) * duckGainAt(p, s.cache, mediaById, c, t - c.start);
+      const vol = silent || !active ? 0 : valueAt(c, 'volume', t - c.start) * fadeGain(effectiveAudio(p, c), t - c.start, end - c.start) * duckGainAt(p, s.cache, mediaById, c, t - c.start);
 
       // Efeitos que precisam do FFmpeg: toca o áudio processado no lugar do original.
       let proxy = null;
@@ -471,8 +499,19 @@ class Engine {
       if (entry.ael) this.setVolume(entry.ael, entry.again, vol);
 
       if (!active) {
-        if (!el.paused) el.pause();
-        if (entry.ael && !entry.ael.paused) entry.ael.pause();
+        // Pré-aquecimento: o próximo clipe (outro arquivo ou outro ponto) começa a rodar em câmera lenta, mudo, pouco
+        // antes da sua hora. Na hora H o decodificador já está funcionando e a entrada não trava.
+        const lead = c.start - t;
+        const warm = this.lite && this.playing && lead > 0 && lead < 0.7 && entry.primed && !el.seeking && el.readyState >= 2 && !this.continuesFrom(p, c);
+        if (warm) {
+          if (el.paused) {
+            el.playbackRate = 0.0625;
+            el.play().catch(() => {});
+          }
+        } else {
+          if (!el.paused) el.pause();
+          if (entry.ael && !entry.ael.paused) entry.ael.pause();
+        }
         // Deixa o primeiro quadro pronto para não travar na entrada do clipe.
         if (t < c.start && !entry.primed && el.readyState >= 1) {
           el.currentTime = c.in;
@@ -527,6 +566,7 @@ class Engine {
     }
     // Espera no máximo ~2,5 s seguidos (se o vídeo nunca chega, a linha do tempo volta a andar).
     this.heldMs = stalled ? this.heldMs + (nowMs - this.lastTickMs) : 0;
+    if (stalled && this.playing) this.stats.holds.push([+t.toFixed(2), Math.round(nowMs - this.lastTickMs)]);
     this.lastTickMs = nowMs;
     this.stalledPrev = stalled;
     this.mSeek = this.mSeekNow; // o mestre está buscando (pulou o tempo): os outros sons esperam por ele, não correm à frente
@@ -579,7 +619,7 @@ class Engine {
           // por um instante; desenha o último quadro guardado para o player não piscar preto.
           if (entry.el.readyState >= 2) {
             src = entry.el;
-            if (!this.lite || !this.playing || ++this.snapTick % 8 === 0) this.keepFrame(entry);
+            if (!this.lite || !this.playing) this.keepFrame(entry);
           } else if (entry.snap) src = entry.snap;
           else continue;
         }
