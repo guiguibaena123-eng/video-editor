@@ -512,7 +512,7 @@ export class LiteEngine extends Engine {
     }
     // Um clipe de vídeo ainda sem imagem (abrindo, ou recomeçando): desenhar agora deixaria o preto no lugar dele e a
     // tela piscaria. Segura a imagem que já está lá; só desiste e desenha depois de meio segundo.
-    if (missing && this.drawnOnce && this.playing) {
+    if (missing && this.drawnOnce && (this.playing || this.scrubbing)) {
       this.missingSince ||= now;
       if (now - this.missingSince < 500) return;
     } else this.missingSince = 0;

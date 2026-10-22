@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useStore, clipEnd } from '../store';
 import { engine } from '../engine';
 import { decoderMode } from '../web/frames';
+import { runSelfTest } from './selfTest';
 
 // Painel de diagnóstico do player (toque 5 vezes no contador de tempo). Mostra o que acontece de verdade no
 // aparelho: se o navegador recusou tocar, quanto o som/imagem estão fora da linha do tempo, quadros perdidos...
@@ -60,11 +61,34 @@ export default function Diag({ onClose }) {
     };
   }, []);
 
-  const copy = () => navigator.clipboard?.writeText(text).catch(() => {});
+  const [report, setReport] = useState([]);
+  const [running, setRunning] = useState(false);
+  const test = () => {
+    if (running) return;
+    engine.unlockAudio?.(); // ainda dentro do toque
+    setRunning(true);
+    setReport(['Testando… não mexa na tela (uns 40 s).']);
+    const lines = [];
+    // o primeiro play() sai dentro do toque no botão (o iPhone só libera o som assim)
+    runSelfTest((l) => {
+      lines.push(l);
+      setReport([...lines]);
+    })
+      .catch((err) => lines.push('ERRO no teste: ' + (err?.message || err)))
+      .finally(() => {
+        setReport([...lines]);
+        setRunning(false);
+      });
+  };
+  const copy = () => navigator.clipboard?.writeText(report.length ? report.join('\n') + '\n\n' + text : text).catch(() => {});
   return createPortal(
     <div className="mdiag" onPointerDown={(e) => e.stopPropagation()}>
+      {report.length > 0 && <pre>{report.join('\n')}</pre>}
       <pre>{text}</pre>
       <div>
+        <button onClick={test} disabled={running}>
+          {running ? 'Testando…' : 'Testar'}
+        </button>
         <button onClick={copy}>Copiar</button>
         <button onClick={onClose}>Fechar</button>
       </div>

@@ -1484,6 +1484,8 @@ canvas {
   color: #c9f7c9;
   font: 11px/1.45 ui-monospace, Menlo, monospace;
   backdrop-filter: blur(6px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
 }
 .mdiag pre {
   margin: 0 0 8px;
