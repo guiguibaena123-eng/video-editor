@@ -10,6 +10,9 @@ import { hasImageFx, imageFxAt, needsGLPass, withTrackFx } from './effects';
 import { lutFor, spatialOf, onLutReady } from './colorRuntime';
 import { useStore, clipEnd, projectDuration, mediaUrl, cropOf, croppedSize } from './store';
 
+// iPhone/iPad: o navegador ignora o volume do elemento de mídia, então o som precisa passar pelo WebAudio.
+const IOS_LIKE = typeof navigator !== 'undefined' && (/iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
 // Motor de reprodução: mantém um <video> por clipe próximo do cursor, sincroniza
 // com o relógio da linha do tempo e desenha as trilhas de vídeo num canvas.
 class Engine {
@@ -31,6 +34,7 @@ class Engine {
   snapTick = 0;
   lastTickMs = 0;
   heldMs = 0;
+  stalledPrev = false;
 
   drawUntil = 0; // o player só redesenha parado enquanto algo mudou (poupa CPU/GPU/bateria)
   slowFrames = 0;
@@ -71,8 +75,11 @@ class Engine {
   }
 
   // Liga o som do elemento a um controle de volume (permite passar de 100%).
-  connect(entry) {
+  // No celular o som só passa pelo WebAudio quando precisa (volume acima de 100%, ou iPhone, onde o volume do
+  // elemento não funciona): o caminho nativo toca junto com a imagem, sem o atraso extra do WebAudio.
+  connect(entry, vol = 1) {
     if (!this.audioCtx) return;
+    if (this.lite && !(vol > 1.001 || IOS_LIKE)) return;
     if (!entry.gain) entry.gain = this.route(entry.el);
     if (entry.ael && !entry.again) entry.again = this.route(entry.ael);
   }
@@ -92,7 +99,7 @@ class Engine {
   }
 
   // Mantém um elemento de mídia no ponto certo (tocando ou parado).
-  sync(el, target, speed, keepPitch = true) {
+  sync(el, target, speed, keepPitch = true, tol = this.lite ? 0.5 : 0.3) {
     // O navegador só toca entre 1/16x e 16x; fora disso a posição é corrigida por saltos.
     const rate = Math.min(16, Math.max(0.0625, speed));
     if (Math.abs(el.playbackRate - rate) > 1e-3) el.playbackRate = rate;
@@ -101,7 +108,7 @@ class Engine {
       if (el.paused) {
         if (Math.abs(el.currentTime - target) > 0.05) el.currentTime = target;
         el.play().catch(() => {});
-      } else if (!(this.lite && el.seeking) && Math.abs(el.currentTime - target) > (this.lite ? 0.5 : 0.3)) {
+      } else if (!(this.lite && el.seeking) && Math.abs(el.currentTime - target) > tol) {
         el.currentTime = target;
       }
     } else {
@@ -356,6 +363,22 @@ class Engine {
     const mediaById = this.mediaMap;
     const trackById = this.trackMap;
     const near = new Set();
+    // Mestre do relógio (perfil leve): o vídeo visível mais embaixo (trilha principal); só na falta dele, um áudio.
+    let masterId = null;
+    if (this.lite && this.playing) {
+      let best = -1;
+      for (const c of p.clips) {
+        const m0 = mediaById.get(c.mediaId);
+        const tr0 = trackById.get(c.trackId);
+        if (!m0 || !tr0 || m0.missing || m0.type === 'image' || tr0.hidden) continue;
+        if (t < c.start || t >= clipEnd(c)) continue;
+        const score = m0.type === 'video' ? (tr0.main ? 3 : 2) : 1;
+        if (score > best) {
+          best = score;
+          masterId = c.id;
+        }
+      }
+    }
     const nowMs = performance.now();
     if (!this.lastTickMs || nowMs - this.lastTickMs > 250) this.lastTickMs = nowMs;
     let hold = 0;
@@ -384,6 +407,7 @@ class Engine {
         if (st.status === 'ready') proxy = st.path;
       }
       this.setProxy(entry, proxy);
+      if (this.lite && !entry.gain) this.connect(entry, vol);
       this.setVolume(el, entry.gain, entry.ael ? 0 : vol);
       if (entry.ael) this.setVolume(entry.ael, entry.again, vol);
 
@@ -401,11 +425,21 @@ class Engine {
       // Vídeo ainda buscando/carregando o quadro: continua desenhando até ele chegar.
       if ((el.seeking || el.readyState < 2) && !el.error) this.invalidate(150);
       const target = sourceAt(c, t - c.start);
-      this.sync(el, target, speed, keepPitch);
-      if (entry.ael) this.sync(entry.ael, target, speed, keepPitch);
+      const isMaster = c.id === masterId;
+      if (this.lite && this.playing && !isMaster && this.stalledPrev) {
+        // O mestre está esperando o vídeo chegar: os outros sons param juntos (senão ficam adiantados).
+        if (!el.paused) el.pause();
+        if (entry.ael && !entry.ael.paused) entry.ael.pause();
+      } else {
+        // Som tem de ficar bem colado; só um vídeo mudo pode atrasar mais sem ninguém notar.
+        const loud = vol > 0.001;
+        const tol = !this.lite ? 0.3 : isMaster ? 0.6 : loud ? 0.18 : 0.6;
+        this.sync(el, target, speed, keepPitch, tol);
+        if (entry.ael) this.sync(entry.ael, target, speed, keepPitch, tol);
+      }
       // Perfil leve: o vídeo manda no relógio. Se ele atrasa (carregando, busca, celular lento), a linha do
       // tempo espera por ele em vez de seguir sozinha e forçar buscas que travam ainda mais.
-      if (this.lite && this.playing && !hasMaster && !tr.hidden) {
+      if (isMaster) {
         hasMaster = true;
         const lag = target - el.currentTime;
         if ((el.seeking || el.readyState < 2) && !el.error) {
@@ -419,6 +453,7 @@ class Engine {
     this.heldMs = hold > 0 ? this.heldMs + hold : 0;
     if (hold > 0 && this.heldMs < 2500 && this.playing) this.clock.wall0 += hold;
     this.lastTickMs = nowMs;
+    this.stalledPrev = stalled;
 
     for (const id of [...this.entries.keys()]) if (!near.has(id)) this.dispose(id);
     // Esperando o vídeo (troca de clipe, busca): não redesenha, para não piscar preto entre um quadro e outro.
