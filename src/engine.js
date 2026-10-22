@@ -35,6 +35,7 @@ class Engine {
   lastTickMs = 0;
   heldMs = 0;
   stalledPrev = false;
+  stats = { rejects: 0, lastErr: '', plays: 0, rvfc: 0, sync: 0 }; // para o painel de diagnóstico do celular
   frameFlag = false; // chegou um quadro novo do vídeo (requestVideoFrameCallback)
   lastDrawAt = 0;
   drewNow = false;
@@ -83,7 +84,8 @@ class Engine {
   // elemento não funciona): o caminho nativo toca junto com a imagem, sem o atraso extra do WebAudio.
   connect(entry, vol = 1) {
     if (!this.audioCtx) return;
-    if (this.lite && !(vol > 1.001 || IOS_LIKE)) return;
+    // iPhone: o volume do elemento não funciona, mas em 100% (o normal) o som nativo é o mais colado na imagem.
+    if (this.lite && !(vol > 1.001 || (IOS_LIKE && vol > 0.001 && vol < 0.999))) return;
     if (!entry.gain) entry.gain = this.route(entry.el);
     if (entry.ael && !entry.again) entry.again = this.route(entry.ael);
   }
@@ -99,7 +101,11 @@ class Engine {
     if (gainNode) {
       gainNode.gain.value = vol;
       el.volume = 1;
-    } else el.volume = Math.min(1, vol);
+    } else {
+      el.volume = Math.min(1, vol);
+      const mute = vol <= 0.001; // iPhone ignora volume, mas respeita mudo
+      if (el.muted !== mute) el.muted = mute;
+    }
   }
 
   // Mantém um elemento de mídia no ponto certo (tocando ou parado).
@@ -117,13 +123,21 @@ class Engine {
     if (this.playing) {
       if (el.paused) {
         if (Math.abs(el.currentTime - target) > 0.05) el.currentTime = target;
-        el.play().catch(() => {});
+        this.stats.plays++;
+        el.play().catch((err) => {
+          this.stats.rejects++;
+          this.stats.lastErr = err?.name || String(err);
+        });
       } else if (!(this.lite && el.seeking) && Math.abs(el.currentTime - target) > tol) {
         el.currentTime = target;
       }
     } else {
       if (!el.paused) el.pause();
-      if (!el.seeking && Math.abs(el.currentTime - target) > 0.015) el.currentTime = target;
+      if (!el.seeking && Math.abs(el.currentTime - target) > 0.015) {
+        // Arrastando a linha do tempo: no Safari, "fastSeek" vai ao quadro-chave mais próximo (rápido); ao soltar vem a busca exata.
+        if (this.scrubbing && el.fastSeek && Math.abs(el.currentTime - target) > 0.25) el.fastSeek(target);
+        else el.currentTime = target;
+      }
     }
   }
 
@@ -227,6 +241,13 @@ class Engine {
     this.lastTime = start;
     this.playing = true;
     useStore.setState({ playing: true, currentTime: start });
+    // O navegador só deixa o vídeo começar a tocar a partir de um toque: roda o primeiro passo já, dentro do toque
+    // (no iPhone, tocar no próximo quadro de animação é tarde demais e o vídeo nem começa).
+    try {
+      this.frame();
+    } catch (err) {
+      console.error(err);
+    }
   }
 
   // Toca de "from" até "to" e para (usado na prévia de animações).
@@ -284,6 +305,7 @@ class Engine {
       if (this.lite && this.rvfc) {
         const cb = () => {
           this.frameFlag = true;
+          this.stats.rvfc++;
           if (!el.paused && !el.seeking) entry.live = true; // quadro novo apresentado: o vídeo está rodando
 
           if (this.entries.get(clip.id)?.el === el) el.requestVideoFrameCallback(cb);
@@ -382,6 +404,12 @@ class Engine {
       }
       useStore.setState({ currentTime: t });
     }
+    // Mexendo no tempo com o player parado (arrastando a linha): busca rápida; 200 ms sem mexer → busca exata.
+    if (!this.playing) {
+      if (Math.abs(t - this.lastTime) > 1e-4) this.lastScrubAt = performance.now();
+      this.scrubbing = performance.now() - (this.lastScrubAt || 0) < 200;
+      if (this.scrubbing) this.invalidate(350);
+    } else this.scrubbing = false;
     this.lastTime = t;
 
     if (this.mediaSrc !== s.media) {

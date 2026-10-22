@@ -9,6 +9,7 @@ import MTimeline from './Timeline';
 import StageGestures from './StageGestures';
 import { AddSheet, AnimSheet, TextEditSheet } from './TextSheets';
 import { AudioSheet, RecordSheet } from './AudioSheets';
+import Diag from './Diag';
 import { Sheet, Slider, Tool, askText, haptic } from './ui';
 import { pickFiles, importFiles } from './files';
 
@@ -16,6 +17,7 @@ const MAX_CANVAS_W = 720; // pixels reais do player no celular: o suficiente par
 
 export default function MEditor() {
   const [sheet, setSheet] = useState(null);
+  const [diag, setDiag] = useState(false);
   const clip = useStore((s) => (s.selection.length === 1 ? s.project.clips.find((c) => c.id === s.selection[0]) : null));
   const clipMedia = useStore((s) => (clip ? s.media.find((m) => m.id === clip.mediaId) : null));
   const closeSheet = () => setSheet(null);
@@ -37,7 +39,8 @@ export default function MEditor() {
     <div className="medit">
       <TopBar />
       <Stage />
-      <Transport />
+      <Transport onSecret={() => setDiag((d) => !d)} />
+      {diag && <Diag onClose={() => setDiag(false)} />}
       <MTimeline onAdd={add} />
       <Toolbar clip={clip} media={clipMedia} onAdd={add} open={setSheet} />
 
@@ -152,7 +155,8 @@ function Stage() {
   );
 }
 
-function Time() {
+function Time({ onSecret }) {
+  const taps = useRef([]);
   const cur = useRef(null);
   const tot = useRef(null);
   const fmt = (v) => {
@@ -175,21 +179,32 @@ function Time() {
     return useStore.subscribe(apply);
   }, []);
   return (
-    <div className="mtime">
+    <div
+      className="mtime"
+      onClick={() => {
+        // 5 toques seguidos abrem o diagnóstico do player.
+        const n = performance.now();
+        taps.current = [...taps.current.filter((x) => n - x < 1800), n];
+        if (taps.current.length >= 5) {
+          taps.current = [];
+          onSecret?.();
+        }
+      }}
+    >
       <b ref={cur} />
       <span ref={tot} />
     </div>
   );
 }
 
-function Transport() {
+function Transport({ onSecret }) {
   const playing = useStore((s) => s.playing);
   const canUndo = useStore((s) => s.past.length > 0);
   const canRedo = useStore((s) => s.future.length > 0);
   const empty = useStore((s) => s.project.clips.length === 0);
   return (
     <div className="mtransport">
-      <Time />
+      <Time onSecret={onSecret} />
       <button className="m-play" onClick={() => engine.toggle()} disabled={empty} aria-label={playing ? 'Pausar' : 'Reproduzir'}>
         <Icon name={playing ? 'pause' : 'play'} size={26} />
       </button>
