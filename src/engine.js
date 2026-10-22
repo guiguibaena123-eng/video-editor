@@ -103,10 +103,16 @@ class Engine {
   }
 
   // Mantém um elemento de mídia no ponto certo (tocando ou parado).
-  sync(el, target, speed, keepPitch = true, tol = this.lite ? 0.5 : 0.3) {
+  sync(el, target, speed, keepPitch = true, tol = this.lite ? 0.5 : 0.3, nudge = false) {
     // O navegador só toca entre 1/16x e 16x; fora disso a posição é corrigida por saltos.
-    const rate = Math.min(16, Math.max(0.0625, speed));
-    if (Math.abs(el.playbackRate - rate) > 1e-3) el.playbackRate = rate;
+    let rate = Math.min(16, Math.max(0.0625, speed));
+    // Pequeno atraso/adiantamento (som que começou um pouco depois): corrige acelerando ou freando o som em
+    // até 8%, sem busca — a busca faz o som falhar e voltar "bugado". Só para quem segue a linha do tempo.
+    if (nudge && this.playing && !el.paused && !el.seeking) {
+      const drift = el.currentTime - target;
+      if (Math.abs(drift) > 0.02 && Math.abs(drift) <= tol) rate *= 1 - Math.max(-0.08, Math.min(0.08, drift * 0.5));
+    }
+    if (Math.abs(el.playbackRate - rate) > 5e-4) el.playbackRate = rate;
     if (el.preservesPitch !== keepPitch) el.preservesPitch = keepPitch;
     if (this.playing) {
       if (el.paused) {
@@ -215,6 +221,7 @@ class Engine {
     const start = s.currentTime >= total - 0.01 ? 0 : s.currentTime;
     this.clock = { t0: start, wall0: performance.now() };
     this.lastTickMs = performance.now();
+    this.startHold = true; // até o vídeo mestre rodar, os outros sons NÃO esperam: começam juntos e a linha do tempo os alcança
     this.heldMs = 0;
     this.stalledPrev = this.lite; // no celular o relógio só anda quando o vídeo já está rodando
     this.lastTime = start;
@@ -270,13 +277,15 @@ class Engine {
       el.addEventListener('loadeddata', () => this.requestDraw());
       entry = { el, mediaId: media.id, gain: null, primed: false, srcPath: want, live: false };
       // "live" = o vídeo está de fato rodando agora (não só mandado tocar): o relógio espera por isso.
-      const setLive = (v) => () => void (entry.live = v);
+      const setLive = (v) => () => void ((entry.live = v), v || (entry.snapped = false));
       el.addEventListener('playing', setLive(true));
       for (const ev of ['pause', 'waiting', 'seeking', 'ended', 'emptied']) el.addEventListener(ev, setLive(false));
       // Cada quadro novo do vídeo pede um desenho: o player acompanha o ritmo real do vídeo, sem pular quadros.
       if (this.lite && this.rvfc) {
         const cb = () => {
           this.frameFlag = true;
+          if (!el.paused && !el.seeking) entry.live = true; // quadro novo apresentado: o vídeo está rodando
+
           if (this.entries.get(clip.id)?.el === el) el.requestVideoFrameCallback(cb);
         };
         el.requestVideoFrameCallback(cb);
@@ -448,28 +457,27 @@ class Engine {
       if ((el.seeking || el.readyState < 2) && !el.error) this.invalidate(150);
       const target = sourceAt(c, t - c.start);
       const isMaster = c.id === masterId;
-      if (this.lite && this.playing && !isMaster && this.stalledPrev) {
+      if (this.lite && this.playing && !isMaster && this.stalledPrev && !this.startHold) {
         // O mestre está esperando o vídeo chegar: os outros sons param juntos (senão ficam adiantados).
         if (!el.paused) el.pause();
         if (entry.ael && !entry.ael.paused) entry.ael.pause();
       } else {
         // Som tem de ficar bem colado; só um vídeo mudo pode atrasar mais sem ninguém notar.
         const loud = vol > 0.001;
-        const tol = !this.lite ? 0.3 : isMaster ? 0.6 : loud ? 0.18 : 0.6;
-        this.sync(el, target, speed, keepPitch, tol);
-        if (entry.ael) this.sync(entry.ael, target, speed, keepPitch, tol);
+        const tol = !this.lite ? 0.3 : isMaster ? 0.6 : loud ? 0.25 : 0.6;
+        const nudge = this.lite && !isMaster;
+        this.sync(el, target, speed, keepPitch, tol, nudge);
+        if (entry.ael) this.sync(entry.ael, target, speed, keepPitch, tol, nudge);
       }
       // Perfil leve: o vídeo manda no relógio. Se ele atrasa (carregando, busca, celular lento), a linha do
       // tempo espera por ele em vez de seguir sozinha e forçar buscas que travam ainda mais.
       if (isMaster) {
         hasMaster = true;
         // O evento "playing" pode chegar atrasado: se o tempo do vídeo já está andando, ele está rodando.
-        let justLive = false;
-        if (!el.paused && !el.seeking && el.readyState >= 2 && entry.lastCT != null && el.currentTime !== entry.lastCT && !entry.live) {
-          entry.live = true;
-          justLive = true;
-        }
+        if (!el.paused && !el.seeking && el.readyState >= 2 && entry.lastCT != null && el.currentTime !== entry.lastCT && !entry.live) entry.live = true;
+        const justLive = entry.live && !entry.snapped;
         entry.lastCT = el.currentTime;
+        if (this.startHold && (entry.live || this.heldMs >= 2500)) this.startHold = false;
         if (((el.seeking || el.readyState < 2) && !el.error) || (!entry.live && !el.error)) {
           // Ainda não está rodando (começando a tocar, buscando ou carregando): a linha do tempo espera.
           stalled = true;
@@ -479,7 +487,10 @@ class Engine {
           const tv = c.start + (el.currentTime - c.in) / speed;
           const err = tv - t;
           // Acabou de começar a rodar: o relógio encaixa de uma vez no ponto do vídeo.
-          if (justLive && Math.abs(err) <= 1) this.clock = { t0: tv, wall0: nowMs };
+          if (justLive) {
+            entry.snapped = true;
+            if (Math.abs(err) <= 1) this.clock = { t0: tv, wall0: nowMs };
+          }
           else          // Diferença grande = o vídeo ficou para trás de verdade: quem corrige é o sync() (busca), não o relógio.
           if (Math.abs(err) > 0.004 && Math.abs(err) <= 0.5) this.clock.t0 += err * 0.15;
         }
