@@ -1626,3 +1626,87 @@ canvas {
   border-radius: 50%;
   background: #fff;
 }
+
+/* ---------- tela "Preparando o vídeo" ---------- */
+.mprep {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 9, 12, 0.92);
+  backdrop-filter: blur(10px);
+  animation: m-fade 0.25s var(--m-ease) both;
+}
+@keyframes m-fade {
+  from {
+    opacity: 0;
+  }
+}
+.mprep-card {
+  width: min(340px, 100%);
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  text-align: center;
+}
+.mprep-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--m-accent-soft);
+}
+.mprep-icon i {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 199, 44, 0.25);
+  border-top-color: var(--m-accent);
+  animation: m-spin 0.9s linear infinite;
+}
+@keyframes m-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.mprep h2 {
+  margin: 4px 0 0;
+  font-size: 20px;
+}
+.mprep p {
+  margin: 0;
+  color: var(--m-text-2);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.mprep-bar {
+  width: 100%;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 4px;
+  background: var(--m-raised);
+  overflow: hidden;
+}
+.mprep-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--m-accent);
+  transition: width 0.35s var(--m-ease);
+}
+.mprep b {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.mprep-skip {
+  margin-top: 8px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: var(--m-raised);
+  color: var(--m-text-2);
+  font-size: 13.5px;
+  font-weight: 600;
+}

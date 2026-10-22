@@ -13,7 +13,7 @@ engine.lite = true; // perfil leve do motor (celular)
 engine.maxFps = 30;
 
 // Acesso para testes automatizados, só no modo de desenvolvimento.
-if (import.meta.env.DEV) window.__ve = { useStore, ops, engine };
+if (import.meta.env.DEV) import('./prep').then((m) => (window.__ve = { useStore, ops, engine, importWithPrep: m.importWithPrep }));
 
 createRoot(document.getElementById('root')).render(<MobileApp />);
 

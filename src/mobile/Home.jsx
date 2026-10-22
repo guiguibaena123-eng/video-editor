@@ -4,7 +4,8 @@ import { createProject, fillOne, openLibraryProject, cleanError } from '../ops';
 import { Icon, Logo } from '../icons';
 import { fmtDuration } from '../util';
 import { Sheet, askConfirm, askText, haptic } from './ui';
-import { pickFiles, importFiles } from './files';
+import { pickFiles } from './files';
+import { importWithPrep } from './prep';
 import { useInstall } from './install';
 
 const FORMATS = [
@@ -48,7 +49,7 @@ export default function MHome() {
     await createProject({ name: nextName() });
     // Cada arquivo entra na linha do tempo assim que fica pronto: o primeiro não espera os outros.
     let n = 0;
-    await importFiles(files, (m) => fillOne(m, n++ === 0));
+    await importWithPrep(files, (m) => fillOne(m, n++ === 0));
     if (n) useStore.getState().notify(`Projeto criado com ${n} ${n === 1 ? 'arquivo' : 'arquivos'}.`);
     useStore.getState().select([]);
   };

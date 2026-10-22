@@ -5,6 +5,7 @@ import { startAutosave } from '../library';
 import { Toast, DialogHost } from './ui';
 import MHome from './Home';
 import MEditor from './Editor';
+import PrepOverlay from './PrepOverlay';
 
 export default function MobileApp() {
   const view = useStore((s) => s.view);
@@ -47,6 +48,7 @@ export default function MobileApp() {
           <span>{busy.label}</span>
         </div>
       )}
+      <PrepOverlay />
       <Toast />
       <DialogHost />
     </>

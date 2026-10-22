@@ -156,6 +156,7 @@ export const useStore = create((set, get) => ({
   compareOriginal: false, // segurando o botão "original": mostra sem cor
   pickColorFor: null, // conta-gotas do chroma key: id do clipe esperando o clique no player
   busy: null, // tarefa demorada em andamento: { label, progress }
+  prep: null, // tela "preparando o vídeo" (celular): { ids, phase, startedAt }
   previewQuality: loadQuality(), // resolução do player: auto | high | medium | low
   autoScale: 1, // redução automática da resolução quando o PC não acompanha (modo auto)
   theater: false, // player em tela cheia

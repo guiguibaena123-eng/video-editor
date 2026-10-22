@@ -12,7 +12,8 @@ import { AudioSheet, RecordSheet } from './AudioSheets';
 import Diag from './Diag';
 import FullControls, { enterFull, exitFull } from './FullControls';
 import { Sheet, Slider, Tool, askText, haptic } from './ui';
-import { pickFiles, importFiles } from './files';
+import { pickFiles } from './files';
+import { importWithPrep } from './prep';
 
 const MAX_CANVAS_W = 720; // pixels reais do player no celular: o suficiente para uma tela pequena e bem mais leve
 
@@ -31,7 +32,7 @@ export default function MEditor() {
   const add = async () => {
     const files = await pickFiles();
     if (!files.length) return;
-    const added = await importFiles(files, (m) => addMediaToTimeline(m, {}));
+    const added = await importWithPrep(files, (m) => addMediaToTimeline(m, {}));
     if (added.length) haptic(10);
   };
 
