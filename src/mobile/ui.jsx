@@ -209,7 +209,8 @@ export function DialogHost() {
       <div className="dialog" role="alertdialog">
         <h2>{d.title}</h2>
         {d.message && <p>{d.message}</p>}
-        {d.kind === 'text' && <input ref={inputRef} value={text} maxLength={80} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && close(text.trim() || null)} />}
+        {d.kind === 'text' && d.multiline && <textarea ref={inputRef} rows={3} value={text} maxLength={300} placeholder={d.placeholder} onChange={(e) => setText(e.target.value)} />}
+        {d.kind === 'text' && !d.multiline && <input ref={inputRef} value={text} maxLength={80} placeholder={d.placeholder} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && close(text.trim() || null)} />}
         <div className="dialog-actions">
           <button onClick={() => close(d.kind === 'text' ? null : false)}>Cancelar</button>
           <button className={d.danger ? 'danger' : 'primary'} onClick={() => close(d.kind === 'text' ? text.trim() || null : true)}>

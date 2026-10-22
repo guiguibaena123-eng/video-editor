@@ -6,6 +6,8 @@ import { addMediaToTimeline, deleteSelection, duplicateSelection, goHome, setCli
 import { Icon } from '../icons';
 import { clamp, fmtDuration } from '../util';
 import MTimeline from './Timeline';
+import StageGestures from './StageGestures';
+import { AddSheet, AnimSheet, TextEditSheet } from './TextSheets';
 import { Sheet, Slider, Tool, askText, haptic } from './ui';
 import { pickFiles, importFiles } from './files';
 
@@ -19,7 +21,7 @@ export default function MEditor() {
 
   // Fecha o painel quando o clipe deixa de existir ou de estar selecionado.
   useEffect(() => {
-    if (!clip && sheet && sheet !== 'format') setSheet(null);
+    if (!clip && sheet && sheet !== 'format' && sheet !== 'add') setSheet(null);
   }, [clip, sheet]);
 
   const add = async () => {
@@ -38,6 +40,15 @@ export default function MEditor() {
       <MTimeline onAdd={add} />
       <Toolbar clip={clip} media={clipMedia} onAdd={add} open={setSheet} />
 
+      <Sheet open={sheet === 'add'} onClose={closeSheet} title="Adicionar">
+        <AddSheet onClose={closeSheet} />
+      </Sheet>
+      <Sheet open={sheet === 'text' && !!clip && clip.kind === 'text'} onClose={closeSheet} title={clip?.sticker ? 'Adesivo' : 'Texto'} peek>
+        {clip && clip.kind === 'text' && <TextEditSheet clip={clip} />}
+      </Sheet>
+      <Sheet open={sheet === 'anim' && !!clip && clip.kind === 'text'} onClose={closeSheet} title="Animação" peek>
+        {clip && clip.kind === 'text' && <AnimSheet clip={clip} />}
+      </Sheet>
       <Sheet open={sheet === 'format'} onClose={closeSheet} title="Formato do projeto">
         <FormatSheet />
       </Sheet>
@@ -126,8 +137,9 @@ function Stage() {
 
   return (
     <section className="mstage" ref={stageRef}>
-      <div className="canvas-wrap" style={{ width: size.w, height: size.h }} onClick={() => !empty && engine.toggle()}>
+      <div className="canvas-wrap" style={{ width: size.w, height: size.h }}>
         <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} />
+        {!empty && <StageGestures w={size.w} h={size.h} />}
       </div>
     </section>
   );
@@ -202,6 +214,7 @@ function Toolbar({ clip, media, onAdd, open }) {
     return (
       <nav className="mtools" aria-label="Ferramentas">
         <Tool icon="plus" label="Mídia" onClick={onAdd} />
+        <Tool icon="text" label="Texto" onClick={() => open('add')} />
         <Tool icon="layout" label="Formato" onClick={() => open('format')} />
         <Tool icon="magnet" label="Ímã" active={magnet} onClick={() => toggle('magnet')} />
         <Tool icon="snap" label="Atração" active={snap} onClick={() => toggle('snap')} />
@@ -221,6 +234,8 @@ function Toolbar({ clip, media, onAdd, open }) {
         </svg>
       </button>
       <Tool icon="split" label="Dividir" onClick={() => { splitAtPlayhead(); haptic(12); }} />
+      {isText && <Tool icon={clip.sticker ? 'sticker' : 'text'} label={clip.sticker ? 'Adesivo' : 'Texto'} onClick={() => open('text')} />}
+      {isText && <Tool icon="sparkle" label="Animação" onClick={() => open('anim')} />}
       {!isText && !isEffect && media?.type !== 'image' && <Tool icon="stepForward" label="Velocidade" onClick={() => open('speed')} />}
       {hasSound && <Tool icon="volume" label="Volume" onClick={() => open('volume')} />}
       {visual && <Tool icon="crop" label="Posição" onClick={() => open('transform')} />}
