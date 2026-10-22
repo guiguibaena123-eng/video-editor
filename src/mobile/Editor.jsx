@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStore, projectDuration, clipDur, ASPECTS, DEFAULT_TRANSFORM } from '../store';
-import { engine } from '../engine';
+import { engine, IOS_LIKE } from '../engine';
 import { transformAt, valueAt, applyProp, hasKeyframes, findKey, setKeyframe, removeKeyframe, keyframeTimes, KF_PROPS, EASES } from '../keyframes';
 import { addMediaToTimeline, deleteSelection, duplicateSelection, goHome, seek, setClipSpeed, setProjectFormat, splitAtPlayhead } from '../ops';
 import { Icon } from '../icons';
@@ -224,6 +224,7 @@ function Time({ onSecret }) {
 }
 
 function Transport({ onSecret }) {
+  const fastTap = useRef(0);
   const playing = useStore((s) => s.playing);
   const canUndo = useStore((s) => s.past.length > 0);
   const canRedo = useStore((s) => s.future.length > 0);
@@ -231,7 +232,21 @@ function Transport({ onSecret }) {
   return (
     <div className="mtransport">
       <Time onSecret={onSecret} />
-      <button className="m-play" onClick={() => engine.toggle()} disabled={empty} aria-label={playing ? 'Pausar' : 'Reproduzir'}>
+      <button
+        className="m-play"
+        // Toca no instante em que o dedo encosta (não quando levanta): ~80 ms a menos. No iPhone o navegador só aceita ao levantar.
+        onPointerDown={() => {
+          if (IOS_LIKE || empty) return;
+          engine.toggle();
+          fastTap.current = performance.now();
+        }}
+        onClick={() => {
+          if (performance.now() - fastTap.current < 900) return void (fastTap.current = 0);
+          engine.toggle();
+        }}
+        disabled={empty}
+        aria-label={playing ? 'Pausar' : 'Reproduzir'}
+      >
         <Icon name={playing ? 'pause' : 'play'} size={26} />
       </button>
       <div className="mundo">

@@ -11,7 +11,7 @@ import { lutFor, spatialOf, onLutReady } from './colorRuntime';
 import { useStore, clipEnd, projectDuration, mediaUrl, cropOf, croppedSize } from './store';
 
 // iPhone/iPad: o navegador ignora o volume do elemento de mídia, então o som precisa passar pelo WebAudio.
-const IOS_LIKE = typeof navigator !== 'undefined' && (/iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+export const IOS_LIKE = typeof navigator !== 'undefined' && (/iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 
 // Motor de reprodução: mantém um <video> por clipe próximo do cursor, sincroniza
 // com o relógio da linha do tempo e desenha as trilhas de vídeo num canvas.
@@ -112,11 +112,13 @@ class Engine {
   }
 
   // Mantém um elemento de mídia no ponto certo (tocando ou parado).
-  sync(el, target, speed, keepPitch = true, tol = this.lite ? 0.5 : 0.3, nudge = false) {
+  sync(el, target, speed, keepPitch = true, tol = this.lite ? 0.5 : 0.3, nudge = false, boost = 0) {
     // O navegador só toca entre 1/16x e 16x; fora disso a posição é corrigida por saltos.
     let rate = Math.min(16, Math.max(0.0625, speed));
     // Pequeno atraso/adiantamento (som que começou um pouco depois): corrige acelerando ou freando o som em
     // até 8%, sem busca — a busca faz o som falhar e voltar "bugado". Só para quem segue a linha do tempo.
+    // Começo instantâneo: o vídeo ainda está atrás da linha do tempo (acabou de ligar): corre até 2× por um instante.
+    if (boost > 0.03) rate = Math.min(16, rate * Math.min(2, 1 + boost * 4));
     if (nudge && this.playing && !el.paused && !el.seeking) {
       const drift = el.currentTime - target;
       if (Math.abs(drift) > 0.02 && Math.abs(drift) <= tol) rate *= 1 - Math.max(-0.12, Math.min(0.12, drift * 0.8));
@@ -240,7 +242,11 @@ class Engine {
     this.lastTickMs = performance.now();
     this.startHold = true; // até o vídeo mestre rodar, os outros sons NÃO esperam: começam juntos e a linha do tempo os alcança
     this.heldMs = 0;
-    this.stalledPrev = this.lite; // no celular o relógio só anda quando o vídeo já está rodando
+    // Começo instantâneo: a linha do tempo anda NA HORA, sem esperar o decodificador ligar; o vídeo (e o som dele)
+    // entram uns 50–150 ms depois e correm até 2× por um instante para alcançá-la.
+    this.catchUp = this.lite;
+    this.catchStart = performance.now();
+    this.stalledPrev = false;
     this.lastTime = start;
     this.playing = true;
     useStore.setState({ playing: true, currentTime: start });
@@ -263,6 +269,7 @@ class Engine {
   pause() {
     this.stopAt = null;
     this.playing = false;
+    this.catchUp = false;
     for (const e of this.entries.values()) {
       if (this.lite && e.el.readyState >= 2 && !e.snap) this.keepFrame(e); // quadro de apoio para buscas depois de parar
       e.el.pause();
@@ -531,9 +538,10 @@ class Engine {
       } else {
         // Som tem de ficar bem colado; só um vídeo mudo pode atrasar mais sem ninguém notar.
         const loud = vol > 0.001;
-        const tol = !this.lite ? 0.3 : isMaster ? 0.6 : loud ? 0.25 : 0.6;
+        const tol = !this.lite ? 0.3 : isMaster ? 0.6 : loud ? 0.15 : 0.6;
         const nudge = this.lite && !isMaster;
-        this.sync(el, target, speed, keepPitch, tol, nudge);
+        const boost = isMaster && this.catchUp && !c.curve ? Math.max(0, target - el.currentTime) : 0;
+        this.sync(el, target, speed, keepPitch, tol, nudge, boost);
         if (entry.ael) this.sync(entry.ael, target, speed, keepPitch, tol, nudge);
       }
       // Perfil leve: o vídeo manda no relógio. Se ele atrasa (carregando, busca, celular lento), a linha do
@@ -546,7 +554,19 @@ class Engine {
         entry.lastCT = el.currentTime;
         this.mSeekNow = (el.seeking || el.readyState < 2) && !el.error;
         if (this.startHold && (entry.live || this.heldMs >= 2500)) this.startHold = false;
-        if (((el.seeking || el.readyState < 2) && !el.error) || (!entry.live && !el.error)) {
+        // Começo instantâneo: o relógio anda sozinho enquanto o vídeo liga e o alcança (ver play()). Termina quando
+        // o vídeo emparelha, passa de 1,5 s, ou se ele nem estava pronto/ficou muito para trás (aí volta a esperar).
+        if (this.catchUp) {
+          const lag = target - el.currentTime;
+          const notReady = (el.seeking || el.readyState < 2) && !el.error;
+          if (notReady || lag > 1 || nowMs - this.catchStart > 1500 || (entry.live && Math.abs(lag) < 0.03)) {
+            this.catchUp = false;
+            if (entry.live && !notReady && Math.abs(lag) < 0.1) entry.snapped = true; // já está colado: nada de pulo
+          }
+        }
+        if (this.catchUp) {
+          // relógio livre
+        } else if (((el.seeking || el.readyState < 2) && !el.error) || (!entry.live && !el.error)) {
           // Ainda não está rodando (começando a tocar, buscando ou carregando): a linha do tempo espera.
           stalled = true;
         } else if (!c.curve) {
