@@ -565,19 +565,40 @@ function setCache(id, patch) {
 
 export function loadMediaCache(media) {
   if (media.missing) return;
-  if (media.type !== 'audio') {
-    window.api.thumbnails(media.path, media.duration, media.type).then((thumbs) => setCache(media.id, { thumbs })).catch(() => {});
-  }
+  const wantProxy = media.type === 'video' && Math.max(media.width, media.height) > (window.api.proxyMinSide ?? PROXY_MIN_SIDE);
+  const startThumbs = (path) => {
+    if (media.type === 'audio') return;
+    window.api
+      .thumbnails(path, media.duration, media.type)
+      .then((thumbs) => setCache(media.id, { thumbs }))
+      .catch(() => setCache(media.id, { thumbsFailed: true }));
+  };
+  // No celular as miniaturas saem junto com a cópia leve (os quadros já estão decodificados lá) ou, se ela falhar,
+  // do original; sem cópia leve, direto do original.
+  if (!(wantProxy && window.api.proxyThumbs)) startThumbs(media.path);
   if (media.hasAudio) {
-    window.api.waveform(media.path, media.duration).then((wave) => setCache(media.id, { wave })).catch(() => {});
+    window.api
+      .waveform(media.path, media.duration)
+      .then((wave) => setCache(media.id, { wave }))
+      .catch(() => setCache(media.id, { waveFailed: true }));
   }
   // Vídeo grande (2K/4K): o player usa uma cópia leve gerada em segundo plano; a exportação usa o original.
-  if (media.type === 'video' && Math.max(media.width, media.height) > (window.api.proxyMinSide ?? PROXY_MIN_SIDE)) {
+  if (wantProxy) {
     setCache(media.id, { proxyState: 'working' });
+    let gotThumbs = false;
     window.api
-      .previewProxy(media.path, media.hasAudio, (f) => setCache(media.id, { proxyProgress: f }), media.duration)
-      .then((proxy) => setCache(media.id, { proxy, proxyState: 'ready' }))
-      .catch((err) => setCache(media.id, { proxyState: 'failed', proxyError: String(err?.message || err).slice(0, 300) }));
+      .previewProxy(media.path, media.hasAudio, (f) => setCache(media.id, { proxyProgress: f }), media.duration, (thumbs) => {
+        gotThumbs = true;
+        setCache(media.id, { thumbs });
+      })
+      .then((proxy) => {
+        setCache(media.id, { proxy, proxyState: 'ready' });
+        if (window.api.proxyThumbs && !gotThumbs) startThumbs(proxy); // cópia vinda do cache do aparelho: miniaturas dela (seca e rápida)
+      })
+      .catch((err) => {
+        setCache(media.id, { proxyState: 'failed', proxyError: String(err?.message || err).slice(0, 300) });
+        if (window.api.proxyThumbs) startThumbs(media.path);
+      });
   }
 }
 

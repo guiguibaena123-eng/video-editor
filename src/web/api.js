@@ -316,6 +316,7 @@ export function installWebApi() {
     saveProject: async () => null,
     previewProxy: makePreviewProxy,
     proxyMinSide: 1000, // no celular qualquer vídeo acima de HD ganha prévia leve
+    proxyThumbs: true, // e as miniaturas saem da própria geração da cópia
     audioProxy: unsupported('Efeito de áudio'),
     extractFrame: unsupported('Congelar quadro'),
     stabilizeMedia: unsupported('Estabilização'),

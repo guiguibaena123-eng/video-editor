@@ -19,7 +19,7 @@ self.onmessage = (e) => {
     if (!hold) while (waiters.length) waiters.shift()();
   } else if (m.type === 'start') {
     run(m)
-      .then((buffer) => self.postMessage({ type: 'done', buffer }, [buffer]))
+      .then(({ buffer, thumbs }) => self.postMessage({ type: 'done', buffer, thumbs }, [buffer]))
       .catch((err) => self.postMessage({ type: 'error', message: String(err?.message || err) + ' @ ' + String(err?.stack || '').split('\n').slice(0, 4).join(' | ') }));
   }
 };
@@ -108,6 +108,17 @@ async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 12 }) {
   const muxer = new Muxer({ target, video: { codec: 'avc', width: W, height: H }, audio: audioCfg, fastStart: 'in-memory', firstTimestampBehavior: 'cross-track-offset' });
 
   // ---- recodificação ----
+  // Miniaturas da linha do tempo: tiradas dos próprios quadros que já estamos decodificando (sem busca extra).
+  const durSec = vt.duration / vt.timescale || 1;
+  const tCount = Math.max(1, Math.min(20, Math.ceil(durSec / (durSec > 90 ? 5 : 2))));
+  const tInterval = Math.max(durSec / tCount, 0.05);
+  const tc = new OffscreenCanvas(Math.max(8, Math.round((72 * W) / H)), 72);
+  const tg = tc.getContext('2d');
+  const thumbJobs = [];
+  const takeThumb = () => {
+    tg.drawImage(canvas, 0, 0, tc.width, tc.height);
+    thumbJobs.push(tc.convertToBlob({ type: 'image/jpeg', quality: 0.6 }));
+  };
   const canvas = new OffscreenCanvas(W, H);
   const g = canvas.getContext('2d');
   let nextTs = 0;
@@ -135,6 +146,7 @@ async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 12 }) {
         const out = new VideoFrame(canvas, { timestamp: frame.timestamp, duration: frame.duration || step });
         enc.encode(out, { keyFrame: n++ % gop === 0 });
         out.close();
+        while (thumbJobs.length < tCount && frame.timestamp / 1e6 >= thumbJobs.length * tInterval + tInterval / 2 - 1e-4) takeThumb();
       } finally {
         frame.close();
       }
@@ -193,8 +205,18 @@ async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 12 }) {
   if (decErr || encErr) throw decErr || encErr;
   flushAudio();
   if (!chunksOut) throw new Error(`nenhum quadro saiu: amostras lidas ${done}/${total}, quadros decodificados ${framesOut}, pos ${pos}/${blob.size}`);
+  while (thumbJobs.length < tCount) takeThumb(); // vídeo acabou antes da última miniatura: repete o último quadro
+  const frames = [];
+  for (const blobP of thumbJobs) {
+    const blobT = await blobP;
+    frames.push(await new Promise((res) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.readAsDataURL(blobT);
+    }));
+  }
   muxer.finalize();
   dec.close();
   enc.close();
-  return target.buffer;
+  return { buffer: target.buffer, thumbs: { interval: tInterval, frames } };
 }
