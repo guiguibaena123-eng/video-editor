@@ -502,11 +502,19 @@ export class LiteEngine extends Engine {
     // navegador, e a espera pelo decodificador (uma busca) não gasta desenhos repetidos.
     let sig = '';
     let animated = false;
-    for (const { c, e, active } of list) {
+    let missing = false;
+    for (const { c, m, e, active } of list) {
       if (!active) continue;
+      if (m.type === 'video' && !m.missing && !this.sourceOf(c)) missing = true;
       sig += e.fp ? e.fp.curTs + ',' : e.vel ? Math.round(e.vel.currentTime * 1000) + ',' : '-,';
       if (this.playing && isAnimated(c, p)) animated = true;
     }
+    // Um clipe de vídeo ainda sem imagem (abrindo, ou recomeçando): desenhar agora deixaria o preto no lugar dele e a
+    // tela piscaria. Segura a imagem que já está lá; só desiste e desenha depois de meio segundo.
+    if (missing && this.drawnOnce && this.playing) {
+      this.missingSince ||= now;
+      if (now - this.missingSince < 500) return;
+    } else this.missingSince = 0;
     if (this.playing) {
       for (const c of p.clips) if (c.kind && t >= c.start && t < clipEnd(c)) animated = true;
       const since = now - this.lastDrawAt;
@@ -517,7 +525,15 @@ export class LiteEngine extends Engine {
     this.needDraw = false;
     this.lastSig = sig;
     this.drewNow = true;
-    this.draw(t, p, mediaById);
+    this.drawnOnce = true;
+    try {
+      this.draw(t, p, mediaById);
+    } catch (err) {
+      // um desenho que falha no meio deixa a tela pela metade: refaz no próximo quadro em vez de ficar assim
+      this.needDraw = true;
+      this.invalidate(100);
+      console.error(err);
+    }
   }
 
   // O relógio da linha do tempo é o do aparelho (nunca volta nem espera); o som é que o acompanha. Ligado a frio ele
