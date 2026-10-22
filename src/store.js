@@ -1,11 +1,12 @@
 import { create } from 'zustand';
 import { effSpeed } from './speed';
+import { isWebPath, webUrl } from './web/registry';
 
 export const uid = (prefix = 'id') => prefix + '_' + Math.random().toString(36).slice(2, 10);
 export const clipDur = (c) => (c.out - c.in) / effSpeed(c);
 export const clipEnd = (c) => c.start + clipDur(c);
 export const projectDuration = (p) => p.clips.reduce((max, c) => Math.max(max, clipEnd(c)), 0);
-export const mediaUrl = (p) => 'media://file/' + encodeURIComponent(p);
+export const mediaUrl = (p) => (isWebPath(p) ? webUrl(p) : 'media://file/' + encodeURIComponent(p));
 
 export const ASPECTS = {
   '16:9': [1920, 1080],
