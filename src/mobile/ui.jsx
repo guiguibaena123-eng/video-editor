@@ -75,7 +75,7 @@ export function Sheet({ open, onClose, title, children, peek = false, action }) 
 }
 
 // ---------- controle deslizante grande ----------
-export function Slider({ label, value, min, max, step = 1, defaultValue, format = (v) => String(Math.round(v)), onStart, onChange, onEnd }) {
+export function Slider({ label, value, min, max, step = 1, defaultValue, format = (v) => String(Math.round(v)), onStart, onChange, onEnd, accessory }) {
   const ref = useRef(null);
   const drag = useRef(false);
   const lastTap = useRef(0);
@@ -134,6 +134,7 @@ export function Slider({ label, value, min, max, step = 1, defaultValue, format 
       <div className="m-slider-head">
         <span>{label}</span>
         <b>{format(value)}</b>
+        {accessory}
       </div>
       <div ref={ref} className="m-slider-track" role="slider" tabIndex={0} aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={value} onPointerDown={down} onKeyDown={key}>
         <div className="m-slider-rail">
