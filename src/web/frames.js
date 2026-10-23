@@ -2,7 +2,9 @@
 // devagar e entrega o quadro quando quer), lemos o MP4 nós mesmos e decodificamos só os quadros que o player precisa.
 // A imagem fica ligada ao relógio da linha do tempo: pular é decodificar ≤ 1 grupo de quadros; tocar é decodificar
 // um pouco à frente; nada "liga" nem "esquenta". O som continua no elemento de áudio (ver liteEngine.js).
-import { createFile, MP4BoxBuffer, DataStream, Endianness } from 'mp4box';
+import { createFile, MP4BoxBuffer, DataStream, Endianness, Log } from 'mp4box';
+
+Log.setLogLevel(Log.error); // (caixas de dados com zeros no fim do .mov do iPhone enchiam o console de avisos)
 
 // Dá para tocar o ORIGINAL direto, sem a cópia leve? (H.264 de até Full HD cujos grupos de quadros são curtos: buscar
 // decodifica poucos quadros.) Vídeo mais pesado, em outro codec ou com grupos longos continua usando a cópia leve.
@@ -351,7 +353,11 @@ export class FramePlayer {
     const s = this.src;
     const max = Math.min(limit, s.n - 1);
     let guard = 0;
-    while (this.next <= max && this.dec.decodeQueueSize < 8 && this.queue.length < 10 && guard++ < 64) {
+    // Quadro 4K ocupa ~12 MB: guardar poucos à frente (muitos estouram a memória do celular e travam o app).
+    const big = s.w * s.h > MAX_DIRECT_PIXELS;
+    const dqMax = big ? 3 : 8;
+    const qMax = big ? 3 : 10;
+    while (this.next <= max && this.dec.decodeQueueSize < dqMax && this.queue.length < qMax && guard++ < 64) {
       const i = this.next;
       const data = this.bytes(i);
       if (!data) break;
@@ -385,7 +391,8 @@ export class FramePlayer {
       this.reset(target);
     }
     // (Com B-frames o decodificador só entrega um quadro depois de receber alguns seguintes: manda uns a mais.)
-    const ahead = Math.max(mode === 'play' ? 9 : mode === 'idle' ? 6 : 0, s.reorder ? 4 : 0);
+    const big = s.w * s.h > MAX_DIRECT_PIXELS;
+    const ahead = Math.max(mode === 'play' ? (big ? 3 : 9) : mode === 'idle' ? (big ? 2 : 6) : 0, s.reorder ? 4 : 0);
     this.goal = s.need[Math.min(s.n - 1, target + ahead)];
     const have = this.cur ? s.idxAt(this.curTs) : -1;
     // Recomeça (busca) quando o alvo está fora do que a sequência atual consegue entregar: antes do início dela, mais de

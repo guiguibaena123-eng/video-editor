@@ -3,7 +3,9 @@
 // (estala). Aqui o som de cada trecho (4 s) vira um AudioBuffer e é agendado num instante EXATO do relógio de áudio
 // (AudioContext.currentTime): começar, pular e emendar clipes não têm espera nem busca, e imagem e som ficam presos
 // ao mesmo relógio. Só vale para AAC em MP4/MOV (o que câmeras e a cópia leve produzem); o resto continua no <audio>.
-import { createFile, MP4BoxBuffer, DataStream, Endianness } from 'mp4box';
+import { createFile, MP4BoxBuffer, DataStream, Endianness, Log } from 'mp4box';
+
+Log.setLogLevel(Log.error); // (caixas de dados com zeros no fim do .mov do iPhone enchiam o console de avisos)
 
 export const pcmSupported = () => typeof AudioDecoder !== 'undefined' && typeof AudioData !== 'undefined' && typeof AudioContext !== 'undefined';
 
@@ -49,9 +51,16 @@ async function load(blob) {
   const n = samples?.length || 0;
   if (n < 2) throw new Error('poucas amostras');
   const entry = trak.mdia.minf.stbl.stsd.entries[0];
-  const esds = entry.esds;
-  const asc = esds?.esd?.descs?.[0]?.descs?.[0]?.data;
-  if (!asc) throw new Error('sem configuração do som');
+  const rate = at.audio.sample_rate;
+  const ch = at.audio.channel_count;
+  // .mov do iPhone guarda a configuração dentro de uma caixa "wave" que o mp4box não abre: monta a de AAC-LC (2 bytes).
+  let asc = entry.esds?.esd?.descs?.[0]?.descs?.[0]?.data;
+  if (!asc) {
+    const rates = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
+    const idx = rates.indexOf(rate);
+    if (at.codec !== 'mp4a.40.2' || idx < 0) throw new Error('sem configuração do som');
+    asc = new Uint8Array([(2 << 3) | (idx >> 1), ((idx & 1) << 7) | (ch << 3)]);
+  }
   const ts = at.timescale;
   const edit = trak.edts?.elst?.entries?.find((x) => x.media_time >= 0);
   const shift = edit ? edit.media_time / ts : 0; // atraso do codificador: o navegador também o desconta
@@ -66,8 +75,6 @@ async function load(blob) {
     off[i] = s.offset;
     sz[i] = s.size;
   }
-  const rate = at.audio.sample_rate;
-  const ch = at.audio.channel_count;
   const config = { codec: at.codec, sampleRate: rate, numberOfChannels: ch, description: new Uint8Array(asc) };
   const sup = await AudioDecoder.isConfigSupported(config);
   if (!sup.supported) throw new Error('decodificador de som não aceita ' + at.codec);

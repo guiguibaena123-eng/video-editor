@@ -1,7 +1,10 @@
-// Gera a "prévia leve" de um vídeo no próprio aparelho (só celular): lê o MP4 (mp4box), decodifica com WebCodecs,
-// reduz para ~540p, recodifica em H.264 com um quadro-chave a cada ~0,4 s e empacota de novo (mp4-muxer),
-// copiando o som AAC sem mexer. Roda num Worker para não pesar a tela. O vídeo original nunca é alterado.
-import { createFile, MP4BoxBuffer, DataStream, Endianness } from 'mp4box';
+// Gera a "prévia leve" de um vídeo no próprio aparelho (só celular): lê o índice do MP4/MOV (mp4box, só o cabeçalho),
+// busca os quadros no arquivo aos poucos, decodifica com WebCodecs, reduz para ~540p, recodifica em H.264 com um
+// quadro-chave a cada ~0,2 s e empacota de novo (mp4-muxer), copiando o som AAC sem mexer. Roda num Worker para não pesar
+// a tela. O vídeo original nunca é alterado e nunca é carregado inteiro na memória (um 4K de minutos passaria de 1 GB).
+import { createFile, MP4BoxBuffer, DataStream, Endianness, Log } from 'mp4box';
+
+Log.setLogLevel(Log.error); // (caixas de dados com zeros no fim do .mov do iPhone enchiam o console de avisos)
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 
 let hold = false; // o app está tocando: espera (o decodificador é de todos)
@@ -11,6 +14,7 @@ const gate = async () => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+const BLOCK = 24; // amostras lidas do arquivo de uma vez
 
 self.onmessage = (e) => {
   const m = e.data;
@@ -29,8 +33,8 @@ function trackOf(file, id) {
   return file.getTrackById(id) || file.moov?.traks?.find((t) => t.tkhd?.track_id === id) || null;
 }
 
-function videoDescription(file, trackId) {
-  const entry = trackOf(file, trackId).mdia.minf.stbl.stsd.entries[0];
+function videoDescription(trak) {
+  const entry = trak.mdia.minf.stbl.stsd.entries[0];
   const box = entry.avcC || entry.hvcC;
   if (!box) throw new Error('codec de vídeo sem configuração conhecida');
   const s = new DataStream(undefined, 0, Endianness.BIG_ENDIAN);
@@ -38,9 +42,9 @@ function videoDescription(file, trackId) {
   return new Uint8Array(s.buffer, 8); // pula o cabeçalho da caixa (tamanho + nome)
 }
 
-function audioSpecificConfig(file, trackId, rate, channels) {
+function audioSpecificConfig(trak, rate, channels) {
   try {
-    const entry = trackOf(file, trackId).mdia.minf.stbl.stsd.entries[0];
+    const entry = trak.mdia.minf.stbl.stsd.entries[0];
     return entry.esds.esd.descs[0].descs[0].data;
   } catch {
     // Sem a configuração no arquivo: monta a de AAC-LC (2 bytes) com a taxa e os canais conhecidos.
@@ -50,48 +54,54 @@ function audioSpecificConfig(file, trackId, rate, channels) {
   }
 }
 
-async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 6 }) {
+// Lê só o índice do arquivo (o mp4box diz qual trecho precisa a seguir: em vídeo sem "faststart" o índice fica no fim).
+async function readIndex(blob) {
   const file = createFile();
   let info = null;
   let failed = null;
   file.onError = (er) => (failed = new Error('MP4: ' + er));
-  const vq = [];
-  const aq = [];
-  file.onReady = (i) => {
-    info = i;
-    const v = i.videoTracks[0];
-    if (!v) return;
-    file.setExtractionOptions(v.id, 'v', { nbSamples: 60 });
-    const a = i.audioTracks[0];
-    if (a && hasAudio) file.setExtractionOptions(a.id, 'a', { nbSamples: 200 });
-    file.start();
-  };
-  let got = 0;
-  file.onSamples = (id, user, samples) => {
-    if (user === 'v') got += samples.length;
-    (user === 'v' ? vq : aq).push(...samples);
-  };
-
-  // ---- lê o começo do arquivo até conhecer as trilhas ----
-  const CHUNK = 4 * 1024 * 1024;
+  file.onReady = (i) => (info = i);
   let pos = 0;
-  let iter = 0;
-  // O mp4box diz qual é o próximo trecho de que precisa e devolve essa posição. Em vídeos gravados sem "faststart"
-  // o índice fica no FIM do arquivo: ele pede o fim e depois volta ao começo para os quadros. Seguimos o que ele pede.
-  const feed = async () => {
-    if (pos >= blob.size || ++iter > 5000) return false;
-    const end = Math.min(blob.size, pos + CHUNK);
+  let size = 1024 * 1024;
+  for (let iter = 0; !info && pos < blob.size && iter < 600; iter++) {
+    const end = Math.min(blob.size, pos + size);
     const ab = await blob.slice(pos, end).arrayBuffer();
     const next = file.appendBuffer(MP4BoxBuffer.fromArrayBuffer(ab, pos), false);
     pos = typeof next === 'number' && Number.isFinite(next) && next >= 0 ? next : end;
-    return true;
-  };
-  while (!info && (await feed())) if (failed) throw failed;
+    size = 4 * 1024 * 1024;
+    if (failed) throw failed;
+  }
   if (!info) throw new Error('não consegui ler as trilhas do vídeo');
+  return { file, info };
+}
+
+// Bytes das amostras i0..i1 de uma trilha, em trechos contíguos (o som e o vídeo vêm intercalados no arquivo).
+async function readSamples(blob, samples, i0, i1) {
+  const out = new Array(i1 - i0 + 1);
+  let a = i0;
+  while (a <= i1) {
+    let b = a;
+    while (b < i1 && samples[b + 1].offset === samples[b].offset + samples[b].size) b++;
+    const start = samples[a].offset;
+    const end = samples[b].offset + samples[b].size;
+    const buf = new Uint8Array(await blob.slice(start, end).arrayBuffer());
+    for (let i = a; i <= b; i++) out[i - i0] = buf.subarray(samples[i].offset - start, samples[i].offset - start + samples[i].size);
+    a = b + 1;
+  }
+  return out;
+}
+
+async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 6 }) {
+  const { file, info } = await readIndex(blob);
   const vt = info.videoTracks[0];
   if (!vt) throw new Error('sem trilha de vídeo');
   const at = hasAudio ? info.audioTracks[0] : null;
   if (at && !/^mp4a\.40\./.test(at.codec)) throw new Error('som não AAC: prévia leve não copia este formato');
+  const vtrak = trackOf(file, vt.id);
+  const vs = vtrak?.samples;
+  if (!vs?.length) throw new Error('vídeo sem tabela de quadros');
+  const atrak = at ? trackOf(file, at.id) : null;
+  const as = atrak?.samples || [];
 
   // ---- dimensões, rotação e taxa de quadros ----
   const m = vt.matrix ? Array.from(vt.matrix) : [65536, 0, 0, 65536];
@@ -107,14 +117,14 @@ async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 6 }) {
   const srcFps = vt.nb_samples / (vt.duration / vt.timescale) || 30;
   const fps = Math.min(maxFps, Math.round(srcFps));
 
-  const description = videoDescription(file, vt.id);
+  const description = videoDescription(vtrak);
   const decCfg = { codec: vt.codec, codedWidth: cw, codedHeight: ch, description };
   const encCfg = { codec: 'avc1.4d0028', width: W, height: H, bitrate: Math.round(W * H * fps * 0.12), framerate: fps, avc: { format: 'avc' }, latencyMode: 'quality' };
   if (!(await VideoDecoder.isConfigSupported(decCfg)).supported) throw new Error('este aparelho não decodifica ' + vt.codec);
   const encSupport = await VideoEncoder.isConfigSupported(encCfg);
   if (!encSupport.supported) throw new Error('este aparelho não codifica H.264');
 
-  const audioDesc = at ? audioSpecificConfig(file, at.id, at.audio.sample_rate, at.audio.channel_count) : null;
+  const audioDesc = at ? audioSpecificConfig(atrak, at.audio.sample_rate, at.audio.channel_count) : null;
   const audioCfg = at ? { codec: 'aac', numberOfChannels: at.audio.channel_count, sampleRate: at.audio.sample_rate } : undefined;
   const target = new ArrayBufferTarget();
   const muxer = new Muxer({ target, video: { codec: 'avc', width: W, height: H }, audio: audioCfg, fastStart: 'in-memory', firstTimestampBehavior: 'cross-track-offset' });
@@ -167,24 +177,23 @@ async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 6 }) {
   });
   dec.configure(decCfg);
 
-  const total = vt.nb_samples;
+  const total = vs.length;
+  const us = 1e6 / vt.timescale;
   let done = 0;
   let lastReport = 0;
-  const flushAudio = () => {
-    while (aq.length) {
-      const s = aq.shift();
-      const us = 1e6 / s.timescale;
-      muxer.addAudioChunkRaw(s.data, s.is_sync ? 'key' : 'delta', Math.round(s.cts * us), Math.round(s.duration * us), { decoderConfig: { codec: at.codec, numberOfChannels: at.audio.channel_count, sampleRate: at.audio.sample_rate, description: audioDesc } });
-    }
-  };
-  const pump = async () => {
-    while (vq.length) {
+
+  // Os quadros chegam em blocos lidos do arquivo; o bloco seguinte já vem sendo lido enquanto este é decodificado.
+  let ahead = readSamples(blob, vs, 0, Math.min(total, BLOCK) - 1);
+  for (let b0 = 0; b0 < total; b0 += BLOCK) {
+    const i1 = Math.min(total, b0 + BLOCK) - 1;
+    const datas = await ahead;
+    ahead = b0 + BLOCK < total ? readSamples(blob, vs, b0 + BLOCK, Math.min(total, b0 + 2 * BLOCK) - 1) : null;
+    for (let i = b0; i <= i1; i++) {
       await gate();
       if (decErr || encErr) throw decErr || encErr;
       while (dec.decodeQueueSize > 6 || enc.encodeQueueSize > 6) await sleep(3);
-      const s = vq.shift();
-      const us = 1e6 / s.timescale;
-      dec.decode(new EncodedVideoChunk({ type: s.is_sync ? 'key' : 'delta', timestamp: Math.round(s.cts * us), duration: Math.round(s.duration * us), data: s.data }));
+      const s = vs[i];
+      dec.decode(new EncodedVideoChunk({ type: s.is_sync ? 'key' : 'delta', timestamp: Math.round(s.cts * us), duration: Math.round(s.duration * us), data: datas[i - b0] }));
       done++;
       if (done % 15 === 0) await sleep(0); // respiro: o app continua fluido
       const now = performance.now();
@@ -193,38 +202,25 @@ async function run({ blob, hasAudio, shortSide = 540, maxFps = 30, gop = 6 }) {
         self.postMessage({ type: 'progress', f: Math.min(0.99, done / total) });
       }
     }
-    flushAudio();
-  };
-
-  // Arquivos grandes (4K de minutos): solta da memória o que o mp4box já entregou, senão ele guarda o arquivo inteiro.
-  const free = () => {
-    try {
-      file.releaseUsedSamples?.(vt.id, got);
-    } catch {}
-  };
-  await pump();
-  free();
-  while (await feed()) {
-    if (failed) throw failed;
-    await pump();
-    free();
   }
-  file.flush();
-  // O mp4box entrega as amostras de forma assíncrona: espera chegarem todas (ou parar de chegar).
-  for (let idle = 0, last = -1; got < total && idle < 150; idle++) {
-    await sleep(20);
-    await pump();
-    if (got !== last) {
-      last = got;
-      idle = 0;
-    }
-  }
-  await pump();
   await dec.flush();
   await enc.flush();
   if (decErr || encErr) throw decErr || encErr;
-  flushAudio();
-  if (!chunksOut) throw new Error(`nenhum quadro saiu: amostras lidas ${done}/${total}, quadros decodificados ${framesOut}, pos ${pos}/${blob.size}`);
+
+  // ---- som: copiado sem recodificar ----
+  if (at && as.length) {
+    const aus = 1e6 / at.timescale;
+    for (let a0 = 0; a0 < as.length; a0 += 200) {
+      const a1 = Math.min(as.length, a0 + 200) - 1;
+      const datas = await readSamples(blob, as, a0, a1);
+      for (let i = a0; i <= a1; i++) {
+        const s = as[i];
+        muxer.addAudioChunkRaw(datas[i - a0], s.is_sync ? 'key' : 'delta', Math.round(s.cts * aus), Math.round(s.duration * aus), { decoderConfig: { codec: at.codec, numberOfChannels: at.audio.channel_count, sampleRate: at.audio.sample_rate, description: audioDesc } });
+      }
+    }
+  }
+
+  if (!chunksOut) throw new Error(`nenhum quadro saiu: amostras lidas ${done}/${total}, quadros decodificados ${framesOut}`);
   while (thumbJobs.length < tCount) takeThumb(); // vídeo acabou antes da última miniatura: repete o último quadro
   const frames = [];
   for (const blobP of thumbJobs) {

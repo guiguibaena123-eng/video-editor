@@ -554,7 +554,11 @@ export class LiteEngine extends Engine {
     const list = [];
     const near = new Set();
     let players = 0;
-    for (const e of this.entries.values()) if (e.kind === 'video' && (e.fp || e.vel || e.opening)) players++;
+    let bigPlayers = 0;
+    for (const e of this.entries.values()) {
+      if (e.kind === 'video' && (e.fp || e.vel || e.opening)) players++;
+      if (e.fp && e.fp.src.w * e.fp.src.h > 1920 * 1088) bigPlayers++;
+    }
     for (const c of p.clips) {
       const m = mediaById.get(c.mediaId);
       const tr = trackById.get(c.trackId);
@@ -567,12 +571,21 @@ export class LiteEngine extends Engine {
       if (t >= end && !this.entries.has(c.id)) continue; // já passou: não reabre
       near.add(c.id);
       const had = this.entries.has(c.id);
+      // Decodificadores 4K são pesados (memória e hardware): só dois ao mesmo tempo; o terceiro espera o seu momento.
+      const bigM = m.type === 'video' && m.width * m.height > 1920 * 1088 && this.sourcePath(m) === m.path; // (com a cópia leve não pesa)
+      if (!had && !active && bigM && bigPlayers >= 2) {
+        near.delete(c.id);
+        continue;
+      }
       if (!had && !active && players >= MAX_PLAYERS) {
         near.delete(c.id);
         continue;
       }
       const e = this.ensureEntry(c, m, p);
-      if (!had && e.kind === 'video') players++;
+      if (!had && e.kind === 'video') {
+        players++;
+        if (bigM) bigPlayers++;
+      }
       list.push({ c, m, tr, e, active, lead, end });
     }
 

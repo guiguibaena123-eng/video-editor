@@ -145,3 +145,13 @@ falhar, `pcm.failed`) o clipe usa o `<audio>` de antes. `?el` no endereço (ou `
 Detalhes: o contexto só agenda quando `state === 'running'` (senão sairia atrasado); `navigator.audioSession.type = 'playback'` para tocar
 com o botão de silêncio do iPhone ligado; `outputLatency + baseLatency` entram na conta. Diagnóstico mostra `WebAudio` por clipe e os
 contadores `inícios/atrasos/esperas`. Sem isso verificado em iPhone real ainda (só Chrome): conferir com o botão "Testar".
+
+### 4K/HEVC do iPhone (22/10/2026)
+Teste com um `.MOV` real do iPhone (HEVC 4K 24 fps, girado, AAC, trilha `mebx`): a cópia leve passou a ser feita lendo só o ÍNDICE do
+arquivo e buscando os quadros em blocos de 24 (`proxyWorker.js`), sem o `setExtractionOptions` do mp4box (que guardava o arquivo todo
+na memória e falhava com `getTrackById` nesses `.mov`). Som do `.mov`: a configuração AAC vem numa caixa `wave` que o mp4box não abre,
+então `pcm.js` e o worker montam a de AAC-LC (2 bytes) com a taxa e os canais. Sem cópia leve, 4K decodifica direto (HEVC/H.264, nunca
+em software), com fila pequena (3 quadros: cada um ~12 MB) e no máximo dois decodificadores 4K ao mesmo tempo. A linha do tempo só
+re-renderiza quando miniaturas/onda mudam (o progresso da cópia leve mudava o cache a cada 400 ms). Números no Chrome (CPU 1×): 24
+quadros/s, 0 paradas >60 ms, pulos 10–50 ms com cópia leve; sem ela (4K HEVC direto) pulos de 300–700 ms e arrasto pesado — por isso a cópia
+leve é o caminho certo para 4K.

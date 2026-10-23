@@ -1,4 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useStore, clipDur, clipEnd, packMain, projectDuration } from '../store';
 import { engine } from '../engine';
 import { onTime, timeNow } from './timebus';
@@ -21,6 +22,14 @@ const MIN_CLIP = 0.1;
 const SNAP_PX = 9;
 const LONG_MS = 380;
 
+// Dois "cache" valem o mesmo para a linha do tempo se as miniaturas e as ondas de todos os vídeos são as mesmas.
+const sameThumbs = (a, b) => {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) if (a[k]?.thumbs !== b[k]?.thumbs || a[k]?.wave !== b[k]?.wave) return false;
+  return true;
+};
+
 const laneHeight = (tr) => (tr.main ? MAIN_H : SUB_H);
 
 export default function MTimeline({ onAdd }) {
@@ -29,7 +38,7 @@ export default function MTimeline({ onAdd }) {
   const [W, setW] = useState(360);
   const project = useStore((s) => s.project);
   const media = useStore((s) => s.media);
-  const cache = useStore((s) => s.cache);
+  const cache = useStoreWithEqualityFn(useStore, (s) => s.cache, sameThumbs); // (o progresso da cópia leve muda o cache a cada instante: a linha só olha miniaturas e onda)
   const selection = useStore((s) => s.selection);
   const zoom = useStore((s) => s.zoom);
   const [lifted, setLifted] = useState(null);
