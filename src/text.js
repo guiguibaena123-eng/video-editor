@@ -252,15 +252,7 @@ export function drawTextClip(g, clip, local, W, H, settings, opts = {}) {
   if (clip.sticker) {
     const im = emojiImage(st.content);
     if (im) {
-      const size = L.px * 1.15;
-      if (st.shadow.enabled) {
-        const rad = (st.shadow.angle * Math.PI) / 180;
-        const d = st.shadow.distance * k * scale;
-        g.shadowColor = hexA(st.shadow.color, st.shadow.opacity);
-        g.shadowBlur = st.shadow.blur * k * scale;
-        g.shadowOffsetX = Math.cos(rad) * d;
-        g.shadowOffsetY = Math.sin(rad) * d;
-      }
+      const size = L.px * 1.25; // a imagem pronta tem folga para a sombra projetada
       g.drawImage(im, -size / 2, -size / 2, size, size);
       g.restore();
       return;

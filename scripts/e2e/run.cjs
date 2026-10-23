@@ -1050,6 +1050,22 @@ test('adesivos: transparência e GIF animado saem corretos na exportação; emoj
   await js(`window.__ve.useStore.setState({ exportOpen: false })`);
 });
 
+test('adesivos: folha de contato dos emojis com relevo, brilho e sombra', async () => {
+  const data = await js(`(async () => {
+    const E = window.__ve.emojiImg;
+    const list = ['😂','😍','😎','🥳','😭','🤯','👍','👏','🔥','⭐','💯','❤️','🎉','🏆','✅','🚀','🍕','☕','🌈','🐶','🦋','🌸','💰','🎬'];
+    await Promise.all(list.map((e) => E.emojiLoaded(e)));
+    const S = 150, cols = 8, rows = 3;
+    const c = document.createElement('canvas'); c.width = S * cols; c.height = S * rows;
+    const g = c.getContext('2d');
+    const bg = g.createLinearGradient(0, 0, 0, c.height); bg.addColorStop(0, '#d9dbe3'); bg.addColorStop(1, '#8e93a6');
+    g.fillStyle = bg; g.fillRect(0, 0, c.width, c.height);
+    list.forEach((e, i) => { const im = E.emojiImage(e); g.drawImage(im, (i % cols) * S, Math.floor(i / cols) * S, S, S); });
+    return c.toDataURL('image/png');
+  })()`);
+  fs.writeFileSync(path.join(OUT, '12-emojis-relevo.png'), Buffer.from(data.split(',')[1], 'base64'));
+});
+
 test('janela mínima (1100×680): nada vaza para fora da tela', async () => {
   win.unmaximize();
   win.setSize(1100, 680);

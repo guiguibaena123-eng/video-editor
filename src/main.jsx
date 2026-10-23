@@ -8,6 +8,7 @@ import * as ops from './ops';
 import { engine } from './engine';
 import { loadUiZoom } from './util';
 import { loadTheme } from './theme';
+import * as emojiImg from './emojiImg';
 import * as transitions from './transitions';
 import { CAMERAS } from './cameras';
 import { LOOKS } from './looks';
@@ -16,7 +17,7 @@ import { FILTERS } from './color';
 import { TEXT_STYLES } from './textPresets';
 
 // Acesso para testes automatizados: no modo de desenvolvimento ou quando a janela é aberta com ?e2e.
-if (import.meta.env.DEV || new URLSearchParams(location.search).has('e2e')) window.__ve = { useStore, ops, engine, textStyles: TEXT_STYLES, transitions, catalog: { CAMERAS, LOOKS, EFFECTS, FILTERS } };
+if (import.meta.env.DEV || new URLSearchParams(location.search).has('e2e')) window.__ve = { useStore, ops, engine, textStyles: TEXT_STYLES, transitions, emojiImg, catalog: { CAMERAS, LOOKS, EFFECTS, FILTERS } };
 
 loadUiZoom();
 loadTheme();
