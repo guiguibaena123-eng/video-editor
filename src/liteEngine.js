@@ -552,6 +552,7 @@ export class LiteEngine extends Engine {
       e.coldStart = true;
       e.live = false;
       e.lastCT = null;
+      e.playAt = now;
       this.stats.plays++;
       el.play().catch((err) => {
         this.stats.rejects++;
@@ -566,7 +567,7 @@ export class LiteEngine extends Engine {
       if (e.coldStart) {
         // Quanto o som ficou para trás na primeira vez que "pegou" é o atraso do aparelho; da próxima já sai a tempo.
         const behind = target - el.currentTime;
-        this.audioLead = Math.min(0.4, Math.max(0, this.audioLead + behind * 0.7));
+        this.audioLead = Math.min(0.8, Math.max(0, this.audioLead + behind * 0.7));
         e.coldStart = false;
       }
     }
@@ -577,7 +578,13 @@ export class LiteEngine extends Engine {
     }
     const drift = el.currentTime - target;
     const tol = loud ? 0.35 : 0.8;
+    // Som ainda começando (celulares levam de 0,2 a 1 s para o primeiro som sair): esperar, não buscar de novo — cada busca
+    // recomeça a espera e o som fica picotado. Depois de uma busca, também há uma folga antes da próxima.
+    if ((!e.live && now - (e.playAt || 0) < 1600) || now - (e.resyncAt || 0) < 1200) {
+      if (Math.abs(drift) < 1.5) return;
+    }
     if (Math.abs(drift) > tol) {
+      e.resyncAt = now;
       el.currentTime = target + (el.playbackRate > 0 ? 0.03 : 0);
       el.__heat = null;
       this.stats.resyncs = (this.stats.resyncs || 0) + 1;
