@@ -24,7 +24,7 @@ function compose(img) {
   const rim = document.createElement('canvas');
   rim.width = rim.height = S;
   const r = rim.getContext('2d');
-  r.fillStyle = 'rgba(0,0,0,0.38)';
+  r.fillStyle = 'rgba(40,10,0,0.30)';
   r.fillRect(0, 0, S, S);
   r.globalCompositeOperation = 'destination-out';
   r.filter = `blur(${S * 0.022}px)`;
@@ -32,21 +32,31 @@ function compose(img) {
   r.filter = 'none';
   b.globalCompositeOperation = 'source-atop';
   b.drawImage(rim, 0, 0);
+  // luz refletida na borda de baixo (como nos emojis da Apple): branco menos o formato deslocado para cima
+  const bounce = document.createElement('canvas');
+  bounce.width = bounce.height = S;
+  const q = bounce.getContext('2d');
+  q.fillStyle = 'rgba(255,240,210,0.30)';
+  q.fillRect(0, 0, S, S);
+  q.globalCompositeOperation = 'destination-out';
+  q.filter = `blur(${S * 0.012}px)`;
+  q.drawImage(base, 0, -S * 0.014);
+  b.drawImage(bounce, 0, 0);
   // 3) sombra suave de baixo (ambiente) e brilho de cima (reflexo da luz), só dentro do formato
   const down = b.createLinearGradient(0, S * 0.45, 0, S * 0.95);
-  down.addColorStop(0, 'rgba(60,20,0,0)');
-  down.addColorStop(1, 'rgba(60,20,0,0.26)');
+  down.addColorStop(0, 'rgba(70,25,0,0)');
+  down.addColorStop(1, 'rgba(70,25,0,0.17)');
   b.fillStyle = down;
   b.fillRect(0, 0, S, S);
   const gloss = b.createLinearGradient(0, S * 0.06, 0, S * 0.56);
-  gloss.addColorStop(0, 'rgba(255,255,255,0.46)');
-  gloss.addColorStop(0.55, 'rgba(255,255,255,0.1)');
+  gloss.addColorStop(0, 'rgba(255,255,255,0.58)');
+  gloss.addColorStop(0.5, 'rgba(255,255,255,0.14)');
   gloss.addColorStop(1, 'rgba(255,255,255,0)');
   b.fillStyle = gloss;
   b.fillRect(0, 0, S, S);
   const spec = b.createRadialGradient(S * 0.34, S * 0.27, 0, S * 0.34, S * 0.27, S * 0.3);
-  spec.addColorStop(0, 'rgba(255,255,255,0.55)');
-  spec.addColorStop(0.5, 'rgba(255,255,255,0.14)');
+  spec.addColorStop(0, 'rgba(255,255,255,0.72)');
+  spec.addColorStop(0.45, 'rgba(255,255,255,0.18)');
   spec.addColorStop(1, 'rgba(255,255,255,0)');
   b.fillStyle = spec;
   b.fillRect(0, 0, S, S);
