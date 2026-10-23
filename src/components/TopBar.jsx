@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { Icon, Logo } from '../icons';
 import { goHome, saveProject } from '../ops';
+import ThemeButton from './ThemeButton.jsx';
 
 export default function TopBar({ onShortcuts }) {
   const name = useStore((s) => s.project.name);
@@ -51,6 +52,7 @@ export default function TopBar({ onShortcuts }) {
         <i />
         {dirty || saving ? 'Salvando…' : 'Salvo'}
       </span>
+      <ThemeButton />
       <button className="primary export-btn" disabled={!hasClips} onClick={() => useStore.setState({ exportOpen: true })} title="Exportar (Ctrl+E)">
         <Icon name="export" size={16} /> Exportar
       </button>

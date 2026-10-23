@@ -26,8 +26,8 @@ const RESOLUTIONS = [
 const QUALITY = [
   [26, 'Menor arquivo'],
   [21, 'Recomendada'],
-  [17, 'Alta'],
-  [14, 'Máxima'],
+  [18, 'Alta'],
+  [16, 'Máxima'],
 ];
 const FPS = [24, 25, 30, 50, 60];
 const PREFS_KEY = 've.exportPrefs';
@@ -53,7 +53,7 @@ export default function ExportDialog() {
   const [name, setName] = useState(project.name);
   const [res, setRes] = useState(prefs.res || 1080);
   const [fps, setFps] = useState(prefs.fps || project.settings.fps);
-  const [crf, setCrf] = useState(prefs.crf || 21);
+  const [crf, setCrf] = useState(QUALITY.some(([v]) => v === prefs.crf) ? prefs.crf : prefs.crf <= 14 ? 16 : prefs.crf === 17 ? 18 : 21);
   const [codec, setCodec] = useState(prefs.codec || 'h264');
   const [format, setFormat] = useState(prefs.format || 'mp4');
   const [phase, setPhase] = useState('setup'); // setup | running | done | error

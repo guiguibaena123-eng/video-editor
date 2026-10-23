@@ -1,7 +1,7 @@
 {
   "name": "video-editor",
   "productName": "Video Editor",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Editor de vídeo para desktop",
   "main": "electron/main.cjs",
   "type": "module",
@@ -66,6 +66,7 @@
     "@fontsource/bebas-neue": "^5.3.0",
     "@fontsource/caveat": "^5.3.0",
     "@fontsource/dancing-script": "^5.3.0",
+    "@fontsource/inter": "^5.3.0",
     "@fontsource/lobster": "^5.3.0",
     "@fontsource/montserrat": "^5.3.0",
     "@fontsource/oswald": "^5.3.0",

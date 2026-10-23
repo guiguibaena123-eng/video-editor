@@ -7,6 +7,7 @@ import { useStore } from './store';
 import * as ops from './ops';
 import { engine } from './engine';
 import { loadUiZoom } from './util';
+import { loadTheme } from './theme';
 import * as transitions from './transitions';
 import { CAMERAS } from './cameras';
 import { LOOKS } from './looks';
@@ -18,5 +19,6 @@ import { TEXT_STYLES } from './textPresets';
 if (import.meta.env.DEV || new URLSearchParams(location.search).has('e2e')) window.__ve = { useStore, ops, engine, textStyles: TEXT_STYLES, transitions, catalog: { CAMERAS, LOOKS, EFFECTS, FILTERS } };
 
 loadUiZoom();
+loadTheme();
 
 createRoot(document.getElementById('root')).render(<App />);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ThemeButton from './ThemeButton.jsx';
 import { Icon, Logo } from '../icons';
 import { useStore } from '../store';
 import { createProject, createProjectFromFiles, openLibraryProject, openProject, cleanError } from '../ops';
@@ -152,6 +153,7 @@ export default function Home() {
             <p className="muted">{items === null ? 'Carregando…' : empty ? 'Nada por aqui ainda' : `${items.length} ${items.length === 1 ? 'projeto' : 'projetos'}`}</p>
           </div>
           <div className="home-actions">
+            <ThemeButton />
             {!empty && (
               <label className="home-search">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">

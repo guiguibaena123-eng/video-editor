@@ -464,6 +464,11 @@ function registerIpc() {
     });
   });
 
+  ipcMain.handle('window:setTheme', (_e, t) => {
+    if (!win || win.isDestroyed() || !t) return;
+    win.setBackgroundColor(String(t.bg));
+    if (win.setTitleBarOverlay) win.setTitleBarOverlay({ color: String(t.color), symbolColor: String(t.symbolColor), height: 44 });
+  });
   ipcMain.handle('window:setFullScreen', (_e, on) => { if (win && !win.isDestroyed()) win.setFullScreen(!!on); });
   ipcMain.handle('export:cancel', () => { if (exportProc) exportProc.kill('SIGKILL'); });
   // Áudio processado (voz, redução de ruído, normalização) do arquivo inteiro.

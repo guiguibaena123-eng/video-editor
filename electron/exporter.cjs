@@ -24,6 +24,10 @@ function tempoFilters(v, keepPitch) {
   out.push(`atempo=${(Math.round(r * 1e4) / 1e4).toString()}`);
   return out;
 }
+// Redução de tamanho: Lanczos de 2 lóbulos (o padrão de 3 lóbulos realça bordas ~4% a mais que uma redução neutra e cria halos).
+// "exatas": arredondamento preciso e croma completo, para o vídeo não perder cor nem nitidez na conversão.
+const SCALE = 'flags=lanczos+accurate_rnd+full_chroma_int:param0=2';
+const EXACT = 'flags=accurate_rnd+full_chroma_int';
 const num = (n) => (Math.round(n * 1000) / 1000).toString();
 
 function buildExport(job) {
@@ -352,6 +356,7 @@ function buildExport(job) {
         const af = writeTemp(`kfo-${v}.txt`, abs.join('\n') || '0 [enter] all ping 0;');
         chain.push('format=rgba', `sendcmd=f=${lf}`, `scale@kfs${v}=w=${w0}:h=${h0}:eval=frame:flags=bicubic`, `pad@kfp${v}=w=${D}:h=${D}:x=(ow-iw)/2:y=(oh-ih)/2:eval=frame:color=0x00000000`, `rotate@kfr${v}=a=${a0}:ow=${D}:oh=${D}:c=none`, `colorchannelmixer@kfa${v}=aa=${op0}`);
         if (hasBlur) chain.push(`gblur@kfb${v}=sigma=${b0}`);
+        chain.push(`scale=out_color_matrix=bt709:out_range=tv:${EXACT}`, 'format=yuva420p');
         chain.push(`setpts=PTS+${num(c.start)}/TB`);
         graph.push(`${src}${chain.join(',')}[v${v}]`);
         const target = layerTarget(c);
@@ -361,9 +366,17 @@ function buildExport(job) {
         v++;
         continue;
       }
-      chain.push(`scale=${w}:${h}:flags=lanczos`, 'format=rgba');
+      // Clipe sem transparência, giro nem efeitos de cor/máscara: fica em YUV o caminho todo (sem ida e volta por RGB),
+      // então o vídeo sai igual ao original (só reduzido, se for o caso).
+      const alphaFree = opacity >= 1 && !rad && !(c._chroma || c._lut || c._vig > 0 || c._cam || c._fx || c._mask);
+      // Um único scale faz tudo (tamanho + matriz BT.709 de entrada e saída): se a fonte não tem a matriz marcada, um segundo
+      // scale a trataria como BT.601 e mudaria as cores.
+      if (alphaFree) chain.push(`scale=${w}:${h}:${SCALE}:in_color_matrix=bt709:out_color_matrix=bt709:out_range=tv`, 'format=yuv420p');
+      else chain.push(`scale=${w}:${h}:${SCALE}:in_color_matrix=bt709`, 'format=rgba');
       if (opacity < 1) chain.push(`colorchannelmixer=aa=${num(opacity)}`);
       if (rad) chain.push(`rotate=${num(rad)}:ow=rotw(${num(rad)}):oh=roth(${num(rad)}):c=none`);
+      // Volta para YUV com a matriz BT.709 explícita (o padrão do FFmpeg seria BT.601 e deslocaria as cores).
+      if (!alphaFree) chain.push(`scale=out_color_matrix=bt709:out_range=tv:${EXACT}`, 'format=yuva420p');
       chain.push(`setpts=PTS+${num(c.start)}/TB`);
       graph.push(`${src}${chain.join(',')}[v${v}]`);
       const x = `(main_w-overlay_w)/2+${num((tr.x || 0) * W)}`;
@@ -441,6 +454,8 @@ function buildExport(job) {
     '-c:v', isHevc ? 'libx265' : 'libx264', '-preset', 'medium', '-crf', String(crf),
     ...(isHevc ? ['-tag:v', 'hvc1', '-x265-params', 'log-level=error'] : []),
     '-pix_fmt', 'yuv420p', '-r', String(fps),
+    // Cores marcadas como BT.709 (HD/4K): todos os players mostram igual ao editor.
+    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
     '-c:a', 'aac', '-b:a', '192k',
     '-t', num(total), '-movflags', '+faststart', output,
   );

@@ -28,8 +28,42 @@ export function SliderField({ label, value, min, max, step = 1, unit = '', toDis
     <div className="field slider-field">
       <div className="field-top">
         <label
+          className="scrub-label"
           onDoubleClick={() => defaultValue !== undefined && onChange(defaultValue, 'set')}
-          title={defaultValue !== undefined ? 'Clique duas vezes para restaurar' : undefined}
+          onPointerDown={(e) => {
+            // Arrastar o nome do controle para os lados muda o valor (como nos apps de edição do macOS).
+            if (e.button !== 0) return;
+            e.preventDefault();
+            const x0 = e.clientX;
+            const v0 = value;
+            const range = max - min;
+            let started = false;
+            const move = (ev) => {
+              if (!started) {
+                if (Math.abs(ev.clientX - x0) < 3) return;
+                started = true;
+                dragging.current = true;
+                onChange(v0, 'start');
+                document.body.classList.add('scrubbing');
+              }
+              const fine = ev.shiftKey ? 0.2 : 1;
+              const raw = v0 + ((ev.clientX - x0) / 260) * range * fine;
+              const dv = Math.round(toDisplay(raw) / step) * step;
+              onChange(clamp(fromDisplay(dv), min, max), 'live');
+            };
+            const up = () => {
+              window.removeEventListener('pointermove', move);
+              window.removeEventListener('pointerup', up);
+              document.body.classList.remove('scrubbing');
+              if (started) {
+                dragging.current = false;
+                onChange(null, 'end');
+              }
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
+          }}
+          title={'Arraste para ajustar' + (defaultValue !== undefined ? ' · clique duas vezes para restaurar' : '')}
         >
           {label}
         </label>

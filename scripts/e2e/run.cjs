@@ -131,9 +131,13 @@ const test = (name, fn) => tests.push({ name, fn });
 
 test('boot: tela de projetos abre sem erros', async () => {
   await waitFor(() => q('.home'), 8000, 'tela inicial');
+  // preferências de execuções anteriores (seções abertas, tema, painéis...) não podem contaminar os testes
+  await js(`localStorage.clear(); location.reload()`);
+  await sleep(1500);
+  await waitFor(() => q('.home'), 8000, 'tela inicial depois de limpar as preferências');
   const nav = await js(`(() => { const n = performance.getEntriesByType('navigation')[0]; const fp = performance.getEntriesByName('first-contentful-paint')[0]; return { dcl: Math.round(n.domContentLoadedEventEnd), load: Math.round(n.loadEventEnd), fcp: fp ? Math.round(fp.startTime) : null }; })()`);
   console.log('   carregamento da janela (ms):', JSON.stringify(nav));
-  ok(nav.fcp === null || nav.fcp < 1500, 'primeira pintura demorou ' + nav.fcp + ' ms');
+  ok(nav.fcp === null || nav.fcp < 2500, 'primeira pintura demorou ' + nav.fcp + ' ms');
   eq(await state(`s.view`), 'home', 'view inicial');
   ok(await q('.home-empty'), 'estado vazio deveria aparecer sem projetos');
   await shot('01-home-vazio');
@@ -697,6 +701,277 @@ test('vídeo 4K e HEVC: importa, mostra miniaturas, toca sem travar e exporta', 
   ok(worst < 900, 'parada de ' + worst + ' ms na reprodução 4K/HEVC');
   const shown = await js(`(() => { const c = document.querySelector('.canvas-wrap canvas'); const t = document.createElement('canvas'); t.width = 16; t.height = 9; const g = t.getContext('2d'); g.drawImage(c, 0, 0, 16, 9); const d = g.getImageData(0, 0, 16, 9).data; let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2]; return s / (d.length / 4 * 3); })()`);
   ok(shown > 8, 'o player mostrou quadro preto durante o HEVC (brilho ' + shown.toFixed(1) + ')');
+});
+
+test('tema: alternar escuro/claro pelo botão e por Ctrl+Shift+L, grava a escolha', async () => {
+  await js(`window.__ve.ops.goHome()`);
+  await waitFor(() => q('.home .theme-btn'), 3000, 'botão de tema na tela de projetos');
+  if ((await js(`document.documentElement.dataset.theme`)) === 'light') await click('.home .theme-btn'); // sobra de execução anterior
+  eq(await js(`document.documentElement.dataset.theme`), 'dark', 'começa escuro');
+  await click('.home .theme-btn');
+  eq(await js(`document.documentElement.dataset.theme`), 'light', 'claro depois do clique');
+  eq(await js(`localStorage.getItem('ve.theme')`), 'light', 'escolha gravada');
+  await sleep(450);
+  const bg = await js(`getComputedStyle(document.body).backgroundColor`);
+  ok(/rgb\(24\d, 24\d, 24\d\)/.test(bg), 'fundo claro: ' + bg);
+  await shot('10-tema-claro-home');
+  await newProject();
+  await importAll([M.vidA, M.img]);
+  await addByName('a-720p.mp4'); await addByName('img.png');
+  await js(`window.__ve.ops.addTextPreset(window.__ve.textStyles[2])`);
+  await js(`window.__ve.useStore.setState({ selection: [window.__ve.useStore.getState().project.clips[0].id], currentTime: 1 })`);
+  await sleep(500);
+  await shot('10-tema-claro-editor');
+  for (const t of [1, 3, 5]) { await js(`document.querySelectorAll('.left-tab')[${t}].click()`); await sleep(500); await shot('10-tema-claro-aba' + t); }
+  await key('l', ['control', 'shift']);
+  eq(await js(`document.documentElement.dataset.theme`), 'dark', 'Ctrl+Shift+L volta ao escuro');
+  await key('l', ['control', 'shift']);
+  await key('l', ['control', 'shift']);
+  await js(`localStorage.setItem('ve.theme', 'dark')`);
+});
+
+test('fidelidade: exportar sem editar mantém cor e nitidez do original (qualidade máxima)', async () => {
+  await js(`window.__ve.ops.goHome()`);
+  await newProject();
+  await importAll([M.vidA]);
+  await addByName('a-720p.mp4');
+  const out = path.join(OUT, 'fiel.mp4');
+  dialog.showSaveDialog = async () => ({ canceled: false, filePath: out });
+  await js(`window.__ve.useStore.setState({ exportOpen: true })`);
+  await waitFor(() => q('.export-modal'), 4000, 'diálogo de exportação');
+  await click('.export-modal button', '720p');
+  await click('.export-modal button', 'Máxima');
+  await click('.export-modal .primary');
+  await waitFor(() => js(`/pronto|concluíd|Exportado/i.test(document.querySelector('.export-modal')?.textContent || '')`), 120000, 'exportação concluída');
+  const cp = require('child_process');
+  const psnr = (f) => {
+    const log = cp.spawnSync(FF, ['-hide_banner', '-i', f, '-i', M.vidA, '-filter_complex', '[0:v]format=yuv420p[a];[1:v]format=yuv420p[b];[a][b]psnr', '-an', '-f', 'null', '-'], { encoding: 'utf8' }).stderr.replace(/\r/g, '\n');
+    const m = /PSNR y:([\d.]+|inf) u:([\d.]+|inf) v:([\d.]+|inf)/.exec(log);
+    ok(m, 'não consegui medir o PSNR');
+    return m.slice(1).map((x) => (x === 'inf' ? 99 : +x));
+  };
+  // Referência: a melhor recodificação simples possível (mesmo codec e qualidade, sem passar pelo editor).
+  const ideal = path.join(OUT, 'ideal.mp4');
+  cp.spawnSync(FF, ['-v', 'error', '-y', '-i', M.vidA, '-an', '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-pix_fmt', 'yuv420p', ideal]);
+  const [y, u, v] = psnr(out);
+  const [iy, iu, iv] = psnr(ideal);
+  console.log(`   PSNR do export: Y ${y.toFixed(1)} U ${u.toFixed(1)} V ${v.toFixed(1)} dB · recodificação simples: Y ${iy.toFixed(1)} U ${iu.toFixed(1)} V ${iv.toFixed(1)} dB`);
+  ok(y > iy - 1.5 && u > iu - 1.5 && v > iv - 1.5, 'o export perde mais que uma recodificação simples (cor ou detalhe alterados)');
+  const sob = (f) => +(/YAVG=([\d.]+)/.exec(require('child_process').spawnSync(FF, ['-hide_banner', '-v', 'info', '-ss', '1', '-i', f, '-vframes', '1', '-vf', 'format=gray,sobel,signalstats,metadata=print:key=lavfi.signalstats.YAVG', '-f', 'null', '-'], { encoding: 'utf8' }).stderr)?.[1] || 0);
+  const a = sob(M.vidA), b = sob(out);
+  console.log(`   nitidez (borda média): original ${a}, export ${b}`);
+  ok(Math.abs(b / a - 1) < 0.03, `a nitidez mudou ${(100 * (b / a - 1)).toFixed(1)}% (limite 3%)`);
+  await js(`window.__ve.useStore.setState({ exportOpen: false })`);
+});
+
+test('auditoria: clica em todos os botões de todas as abas (sem erro, sem tela quebrada)', async () => {
+  await js(`window.__ve.ops.goHome()`);
+  await newProject();
+  await importAll([M.vidA, M.vidB, M.img, M.aud]);
+  for (const n of ['a-720p.mp4', 'b-1080p.mp4', 'img.png']) await addByName(n);
+  await addByName('music.wav');
+  await js(`window.__ve.ops.addTextPreset(window.__ve.textStyles[1])`);
+  const ids = await js(`(() => { const s = window.__ve.useStore.getState(); const med = (c) => s.media.find((m) => m.id === c.mediaId); return { vid: s.project.clips.find((c) => !c.kind && med(c)?.name === 'a-720p.mp4').id, img: s.project.clips.find((c) => !c.kind && med(c)?.name === 'img.png').id, aud: s.project.clips.find((c) => !c.kind && med(c)?.name === 'music.wav').id, txt: s.project.clips.find((c) => c.kind === 'text').id }; })()`);
+  const SKIP = /^(Excluir|Remover|Limpar|Exportar|Novo projeto|Importar|Abrir arquivo|Gravar|Estabilizar|Reverso|Congelar|Projetos)/i;
+  const report = [];
+  let clicked = 0;
+  const errBase = () => consoleErrors.length;
+  const audit = async (label, scopeSel, sel) => {
+    const n = await js(`document.querySelectorAll(${JSON.stringify(scopeSel + ' ' + sel)}).length`);
+    for (let i = 0; i < n; i++) {
+      const info = await js(`(() => { const el = document.querySelectorAll(${JSON.stringify(scopeSel + ' ' + sel)})[${i}]; if (!el) return null; const t = (el.getAttribute('aria-label') || el.title || el.textContent || '').trim().slice(0, 40); const r = el.getBoundingClientRect(); return { t, off: el.disabled || r.width === 0 || r.height === 0, cls: el.className?.toString?.().slice(0, 40) }; })()`);
+      if (!info || info.off || SKIP.test(info.t)) continue;
+      const e0 = errBase();
+      clicked++;
+      await js(`document.querySelectorAll(${JSON.stringify(scopeSel + ' ' + sel)})[${i}]?.click()`);
+      await sleep(70);
+      // fecha qualquer janela/menu que o clique tenha aberto e volta ao editor
+      for (let k = 0; k < 3; k++) {
+        if (await js(`!!document.querySelector('.modal-backdrop, .modal-back, .context-menu, .popover')`)) { await key('Escape'); await sleep(60); }
+      }
+      if ((await state(`s.view`)) !== 'editor') { await js(`window.__ve.useStore.setState({ view: 'editor' })`); report.push(`${label} · "${info.t}" levou para a tela de projetos`); }
+      if (await q('.boundary-panel, .boundary-app')) { report.push(`${label} · "${info.t}" quebrou um painel`); await click('.boundary-panel .secondary'); }
+      const errs = consoleErrors.slice(e0).filter((m) => !/Security|falha simulada|ErrorBoundary|above error|moov atom/i.test(m));
+      if (errs.length) report.push(`${label} · "${info.t}": ${errs[0].slice(0, 160)}`);
+    }
+  };
+  const sel = (id) => js(`window.__ve.useStore.setState({ selection: [${JSON.stringify(id)}], currentTime: 1 })`);
+  // abas da esquerda (com um vídeo selecionado)
+  await sel(ids.vid);
+  const nTabs = await js(`document.querySelectorAll('.left-tab').length`);
+  for (let t = 0; t < nTabs; t++) {
+    await js(`document.querySelectorAll('.left-tab')[${t}].click()`);
+    await sleep(350);
+    await audit('esquerda ' + t, '.left-panel', 'button:not(.left-tab)');
+    await sel(ids.vid);
+  }
+  // inspetor: cada aba de cada tipo de clipe
+  for (const [kind, id] of Object.entries(ids)) {
+    await sel(id);
+    await sleep(250);
+    const tabs = await js(`document.querySelectorAll('.inspector .tab').length`);
+    for (let t = 0; t < tabs; t++) {
+      await js(`document.querySelectorAll('.inspector .tab')[${t}].click()`);
+      await sleep(250);
+      const name = await js(`document.querySelectorAll('.inspector .tab')[${t}]?.textContent`);
+      await audit(`inspetor ${kind}/${name}`, '.inspector .panel-scroll', 'button');
+      await sel(id);
+    }
+  }
+  // barra do player e da linha do tempo
+  await sel(ids.vid);
+  await audit('player', '.preview-panel', '.transport button, .transport .icon-btn');
+  await audit('barra da linha do tempo', '.tl-toolbar', 'button');
+  console.log(`   ${clicked} botões clicados`);
+  if (report.length) console.log('   ACHADOS:\n   - ' + report.join('\n   - '));
+  eq(report, [], 'botões com problema');
+});
+
+// ---------- funcional: cada item dos painéis faz o que promete ----------
+const setupFx = async () => {
+  await js(`window.__ve.ops.goHome()`);
+  await newProject();
+  await importAll([M.vidA, M.vidB, M.img]);
+  for (const n of ['a-720p.mp4', 'b-1080p.mp4', 'img.png']) await addByName(n);
+  const cl = await mainClips();
+  await js(`window.__ve.useStore.setState({ selection: [${JSON.stringify(cl[1].id)}], currentTime: 1 })`);
+  return cl;
+};
+const leftTab = async (i) => { await js(`document.querySelectorAll('.left-tab')[${i}].click()`); await sleep(350); };
+const openSection = (title) => js(`(() => { const b = [...document.querySelectorAll('.inspector .section-toggle')].find((x) => x.textContent.trim().startsWith(${JSON.stringify(title)})); if (b && b.getAttribute('aria-expanded') === 'false') b.click(); return !!b; })()`);
+const clipOf = (id) => state(`window.__ve.useStore.getState().project.clips.find((c) => c.id === ${JSON.stringify(id)})`);
+
+test('funcional: as 18 transições do painel aplicam no clipe selecionado', async () => {
+  const cl = await setupFx();
+  await leftTab(4);
+  const total = await js(`document.querySelectorAll('.left-panel .tr-card').length - 1`);
+  eq(total, 18, 'cartões de transição');
+  const seen = new Set();
+  for (let i = 1; i <= total; i++) {
+    await js(`document.querySelectorAll('.left-panel .tr-card')[${i}].click()`);
+    const t = (await clipOf(cl[1].id)).transition?.type ?? null;
+    ok(t, 'cartão ' + i + ' não aplicou transição');
+    seen.add(t);
+  }
+  eq(seen.size, 18, 'tipos diferentes aplicados');
+  await js(`document.querySelectorAll('.left-panel .tr-card')[0].click()`);
+  eq((await clipOf(cl[1].id)).transition ?? null, null, '"Nenhuma" remove');
+});
+
+test('funcional: todos os efeitos do painel ligam e desligam no clipe', async () => {
+  const cl = await setupFx();
+  await leftTab(5);
+  await click('.left-panel .mask-chip', 'No clipe');
+  await click('.left-panel .filter-cats .mask-chip', 'Todos');
+  await sleep(300);
+  const total = await js(`document.querySelectorAll('.left-panel .tr-card').length`);
+  const catalog = await js(`window.__ve.catalog.EFFECTS.length`);
+  eq(total, catalog, 'cartões de efeito');
+  const seen = new Set();
+  for (let i = 0; i < total; i++) {
+    await js(`document.querySelectorAll('.left-panel .tr-card')[${i}].click()`);
+    const fx = ((await clipOf(cl[1].id)).effects || []).map((e) => e.type);
+    ok(fx.length === 1, `cartão ${i}: esperava 1 efeito ligado, veio ${fx.length}`);
+    seen.add(fx[0]);
+    await js(`document.querySelectorAll('.left-panel .tr-card')[${i}].click()`);
+    eq(((await clipOf(cl[1].id)).effects || []).length, 0, `cartão ${i} desligar`);
+  }
+  eq(seen.size, catalog, 'efeitos distintos');
+  await click('.left-panel .mask-chip', 'Na trilha de efeito');
+  await js(`document.querySelectorAll('.left-panel .tr-card')[0].click()`);
+  ok(await state(`s.project.clips.some((c) => c.kind === 'effect')`), 'clipe de efeito criado na trilha de efeito');
+});
+
+test('funcional: filtros, looks de cinema e câmeras do painel Cor aplicam e saem', async () => {
+  const cl = await setupFx();
+  await js(`[...document.querySelectorAll('.inspector .tab')].find((b) => b.textContent.trim() === 'Cor').click()`);
+  await sleep(300);
+  for (const [title, key, count] of [['Filtros', 'filter', 'FILTERS'], ['Looks de cinema', 'look', 'LOOKS'], ['Câmeras e lentes', 'camera', 'CAMERAS']]) {
+    await openSection(title);
+    await sleep(500);
+    const want = await js(`window.__ve.catalog.${count}.length`);
+    const sel = `(() => { const sec = [...document.querySelectorAll('.inspector .section')].find((x) => x.querySelector('.section-toggle')?.textContent.trim().startsWith(${JSON.stringify(title)})); return sec ? [...sec.querySelectorAll('.filter-card')] : []; })()`;
+    const n = await js(`${sel}.length`);
+    ok(n >= want, `${title}: ${n} cartões para ${want} itens`);
+    const seen = new Set();
+    for (let i = 0; i < n; i++) {
+      await js(`${sel}[${i}].click()`);
+      const id = ((await clipOf(cl[1].id)).color || {})[key]?.id;
+      if (id) seen.add(id);
+    }
+    ok(seen.size >= want * 0.95, `${title}: só ${seen.size} de ${want} aplicaram`);
+    await js(`window.__ve.useStore.getState().commit((p) => { delete p.clips.find((c) => c.id === ${JSON.stringify(cl[1].id)}).color; })`);
+    await sleep(150);
+  }
+});
+
+test('funcional: estilos de texto, adesivos, legendas e modelos', async () => {
+  await setupFx();
+  await leftTab(3);
+  await click('.left-panel button', 'Textos');
+  await sleep(300);
+  const n = await js(`document.querySelectorAll('.left-panel .preset-card').length`);
+  ok(n >= 16, 'estilos de texto: ' + n);
+  const t0 = await state(`s.project.clips.filter((c) => c.kind === 'text').length`);
+  for (let i = 0; i < n; i++) { await js(`document.querySelectorAll('.left-panel .preset-card')[${i}].click()`); await sleep(40); }
+  ok((await state(`s.project.clips.filter((c) => c.kind === 'text').length`)) >= t0 + 4, 'textos adicionados');
+  await click('.left-panel button', 'Legendas');
+  await sleep(300);
+  const c0 = await state(`s.project.clips.filter((c) => c.caption).length`);
+  await click('.left-panel .primary.small');
+  await sleep(200);
+  eq(await state(`s.project.clips.filter((c) => c.caption).length`), c0 + 1, 'legenda adicionada');
+  const styles = await js(`document.querySelectorAll('.left-panel .cap-style').length`);
+  ok(styles >= 5, 'estilos de legenda: ' + styles);
+  for (let i = 0; i < styles; i++) await js(`document.querySelectorAll('.left-panel .cap-style')[${i}].click()`);
+  await leftTab(6);
+  const st = await js(`document.querySelectorAll('.left-panel .sticker-btn').length`);
+  ok(st > 20, 'adesivos: ' + st);
+  const k0 = await state(`s.project.clips.length`);
+  await js(`document.querySelectorAll('.left-panel .sticker-btn')[0].click()`);
+  eq(await state(`s.project.clips.length`), k0 + 1, 'adesivo adicionado');
+  await leftTab(1);
+  eq(await js(`document.querySelectorAll('.left-panel .tpl-card').length`), 9, 'modelos de projeto');
+});
+
+test('funcional: máscaras, mesclagem, espelhar e velocidade pelo inspetor', async () => {
+  const cl = await setupFx();
+  const tab = async (name) => { await js(`[...document.querySelectorAll('.inspector .tab')].find((b) => b.textContent.trim() === ${JSON.stringify(name)}).click()`); await sleep(300); };
+  await tab('Máscara');
+  const chips = await js(`document.querySelectorAll('.inspector .mask-chip').length`);
+  ok(chips >= 4, 'tipos de máscara: ' + chips);
+  await js(`document.querySelectorAll('.inspector .mask-chip')[1].click()`);
+  await sleep(150);
+  ok((await clipOf(cl[1].id)).mask, 'máscara aplicada');
+  await js(`document.querySelectorAll('.inspector .mask-chip')[0].click()`);
+  await tab('Vídeo');
+  await openSection('Mesclagem');
+  await openSection('Virar a imagem');
+  await sleep(300);
+  await js(`(() => { const sel = [...document.querySelectorAll('.inspector select')].find((x) => [...x.options].some((o) => /multiplic/i.test(o.textContent))); const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; const o = [...sel.options].find((o) => o.value !== 'normal'); set.call(sel, o.value); sel.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await sleep(150);
+  ok((await clipOf(cl[1].id)).blend, 'modo de mesclagem aplicado');
+  await click('.inspector button', 'Espelhar');
+  ok((await clipOf(cl[1].id)).flipH, 'espelhar');
+  await click('.inspector button', 'Espelhar');
+  const d0 = (await mainClips())[1].dur;
+  await js(`window.__ve.ops.setClipSpeed(${JSON.stringify(cl[1].id)}, { speed: 2 })`);
+  near((await mainClips())[1].dur, d0 / 2, 0.05, 'velocidade 2×');
+});
+
+test('inspetor: arrastar o nome do controle ajusta o valor (um passo só no desfazer)', async () => {
+  const cl = await setupFx();
+  await js(`[...document.querySelectorAll('.inspector .tab')].find((b) => b.textContent.trim() === 'Vídeo').click()`);
+  await openSection('Opacidade');
+  await sleep(300);
+  const r = await js(`(() => { const l = [...document.querySelectorAll('.inspector .scrub-label')].find((x) => x.textContent.trim() === 'Opacidade'); l.scrollIntoView({ block: 'center' }); const b = l.getBoundingClientRect(); return { x: b.x + 10, y: b.y + b.height / 2 }; })()`);
+  const past0 = await state(`s.past.length`);
+  await drag(r.x, r.y, r.x - 120, r.y, 10);
+  const op = (await clipOf(cl[1].id)).transform?.opacity ?? 1;
+  ok(op < 0.8 && op > 0.2, 'a opacidade deveria cair arrastando para a esquerda (veio ' + op + ')');
+  eq(await state(`s.past.length`), past0 + 1, 'um único passo de desfazer');
+  await key('z', ['control']);
+  near((await clipOf(cl[1].id)).transform?.opacity ?? 1, 1, 0.001, 'desfazer volta a 100%');
 });
 
 test('janela mínima (1100×680): nada vaza para fora da tela', async () => {

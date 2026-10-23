@@ -201,3 +201,20 @@ O mobile foi encerrado por decisão do usuário: o código (`src/mobile`, `src/w
 - **Armadilhas**: `win.setSize` não tem efeito com a janela maximizada (o app maximiza ao abrir) → `win.unmaximize()` antes; telas maiores que o monitor de teste
   se simulam com `setZoomFactor` < 1; `EFFECTS` é lista de arrays (`[tipo, nome, cat]`), não objetos; o servidor de teste usa a porta 5173 (feche o `vite` solto).
 
+
+### Fidelidade da exportação (23/10/2026)
+Medido com o vídeo real do usuário (iPhone 4K HEVC): o export sem edição agora fica com a mesma nitidez do original (borda média 70,4 vs 70,6) e as cores
+exatas. Causas corrigidas em `electron/exporter.cjs`: (1) ida e volta YUV→RGBA→YUV com a matriz BT.601 padrão do swscale (PSNR 36,6 → 42,8 dB; o resto é só a
+compressão H.264) — clipe sem transparência/giro/efeitos agora fica em YUV o caminho todo, num único `scale` com `in/out_color_matrix=bt709` (um 2º scale tratava fonte
+sem matriz marcada como 601 e mudava as cores); caminho com alfa converte para `yuva420p` com 709 explícito; (2) redução com Lanczos de 3 lóbulos realçava ~4,4% (halos) →
+`lanczos` de 2 lóbulos (+0,5%); (3) saída marcada BT.709 (`-colorspace/-color_primaries/-color_trc/-color_range`). Teste e2e "fidelidade" compara com uma recodificação simples.
+Cuidado: um `scale` com `out_color_matrix` e fonte sem matriz marcada converte 601→709 sem avisar.
+
+### Polimento estilo macOS + auditoria funcional (23/10/2026)
+- **Visual**: fonte Inter (embutida, só latim), `--glass` + `backdrop-filter` em menus/janelas/avisos/dicas, abas em pílula e controles segmentados (`.seg`, `.chip`, `.tab`),
+  seções do inspetor como grupos arredondados, sliders finos com bolinha que cresce, foco em halo suave, rolagem fina que só aparece ao passar o mouse, cartões com mola
+  (`--spring`), botão principal com brilho. Bloco "Polimento estilo macOS" no fim de `styles.css`; usa `rgb(var(--tint) / a)` para valer nos dois temas.
+- **Interação**: arrastar o NOME de um controle (`.scrub-label`) muda o valor (Shift = fino; duplo clique restaura; um passo no desfazer).
+- **Auditoria**: teste `auditoria` clica em ~330 botões de todas as abas sem erro; testes `funcional:` conferem que as 18 transições, os 51 efeitos, 53 filtros, 41 looks,
+  34 câmeras, 16 estilos de texto, 5 estilos de legenda, adesivos, 9 modelos, máscaras, mesclagem, espelhar e velocidade realmente aplicam pelo painel.
+  O teste `boot` limpa `localStorage` (as preferências de seções abertas contaminavam os outros testes).

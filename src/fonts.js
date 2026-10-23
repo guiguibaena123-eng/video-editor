@@ -1,4 +1,9 @@
 // Fontes embutidas no app (funcionam sem internet).
+// Inter: fonte da interface (parecida com a do macOS), só o alfabeto latino.
+import '@fontsource/inter/latin-400.css';
+import '@fontsource/inter/latin-500.css';
+import '@fontsource/inter/latin-600.css';
+import '@fontsource/inter/latin-700.css';
 import '@fontsource/montserrat/400.css';
 import '@fontsource/montserrat/700.css';
 import '@fontsource/montserrat/900.css';

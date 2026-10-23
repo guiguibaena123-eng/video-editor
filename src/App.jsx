@@ -24,6 +24,7 @@ import Home from './components/Home.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import { startAutosave } from './library';
 import { openVeditPath } from './ops';
+import { toggleTheme } from './theme';
 
 const SPLIT_KEY = 've.timelineHeight';
 const COLS_KEY = 've.panelWidths';
@@ -42,6 +43,11 @@ export default function App() {
   useEffect(() => {
     const onKey = (e) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (e.shiftKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        toggleTheme();
+        return;
+      }
       const dir = e.key === '=' || e.key === '+' ? 1 : e.key === '-' || e.key === '_' ? -1 : e.key === '0' ? 0 : null;
       if (dir === null) return;
       e.preventDefault();

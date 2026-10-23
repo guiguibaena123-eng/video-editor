@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('api', {
   openLut: () => ipcRenderer.invoke('lut:open'),
   readLut: (p) => ipcRenderer.invoke('lut:read', p),
   showItem: (p) => ipcRenderer.invoke('shell:showItem', p),
+  setTheme: (t) => ipcRenderer.invoke('window:setTheme', t),
   setUiZoom: (f) => webFrame.setZoomFactor(f),
   getUiZoom: () => webFrame.getZoomFactor(),
   setDirty: (value) => ipcRenderer.send('app:dirty', value),
