@@ -351,13 +351,13 @@ function FormatSheet() {
             setPreviewQuality('auto');
             ensureProxies();
           }}>
-          Leve (mais fluido)
+          Leve (recomendado)
         </button>
         <button className={'mchip' + (quality === 'high' ? ' on' : '')} onClick={() => setPreviewQuality('high')}>
-          Original (4K)
+          Original (4K, pesado)
         </button>
       </div>
-      <p className="mhint">A prévia leve toca uma cópia pequena do vídeo, feita sozinha no aparelho. A exportação sempre usa o vídeo original.</p>
+      <p className="mhint">Leve: toca uma cópia menor do vídeo (feita sozinha no aparelho), fluida mesmo em 4K. Original: toca o vídeo como veio, mais nítido, mas vídeos pesados podem engasgar. A exportação sempre usa o vídeo original.</p>
       <p className="msec">Quadros por segundo</p>
       <div className="mchips">
         {FPS_LIST.map((f) => (

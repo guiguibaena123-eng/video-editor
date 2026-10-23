@@ -36,7 +36,7 @@ export default function Diag({ onClose }) {
         const media = e.el || e.vel;
         const drift = media ? Math.round((media.currentTime - (c.in + (t - c.start) * (c.speed || 1))) * 1000) : 0;
         const el = e.el;
-        const src = /-p\/previa\.mp4$/.test(e.srcPath || '') ? ' · PRÉVIA LEVE' : ' · original';
+        const src = /-p\d*\/previa\.mp4$/.test(e.srcPath || '') ? ' · PRÉVIA LEVE' : ' · original';
         const vis = e.fp ? ` · imagem: quadros${e.fp.failed ? ' FALHOU ' + String(e.fp.failed.message || e.fp.failed).slice(0, 40) : ''} (${decoderMode(e.fp.src)}, ${e.fp.stats.decoded} quadros, ${e.fp.stats.resets} buscas${e.fp.src.reorder ? ', B-frames' : ''}${e.fp.src.rot ? ', girado ' + e.fp.src.rot + '°' : ''})` : e.vel ? ' · imagem: <video> mudo' : m.type === 'video' ? ' · imagem: abrindo' : '';
         rows.push(`${m.type[0]} ${m.name.slice(0, 14)} · som ${e.pcmState === 'ready' ? 'WebAudio' + (e.sched ? ' tocando' : '') : e.pcmState === 'off' ? '<audio> (formato)' : e.pcmState}${media ? ` desvio ${drift} ms · ${el ? (el.paused ? 'som PARADO' : 'som tocando') : ''}${el?.seeking ? ' buscando' : ''} · estado ${el?.readyState ?? '-'}${e.live ? ' · live' : ''}${e.gain ? ' · WebAudio' : ''}` : ''}${src}${vis}${q ? ` · perdidos ${q.droppedVideoFrames}/${q.totalVideoFrames}` : ''}${pc?.proxyState ? ` · cópia leve: ${pc.proxyState}${pc.proxyError ? ' (' + pc.proxyError.slice(0, 220) + ')' : ''}` : ''}`);
       }

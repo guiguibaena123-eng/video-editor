@@ -260,7 +260,7 @@ async function releaseMedia(data) {
 async function collectGarbage() {
   const used = new Set();
   for (const [, rec] of await dbAll('projects')) for (const m of rec.data?.media || []) if (isWebPath(m.path)) used.add(webId(m.path));
-  for (const id of await dbKeys('files')) if (!used.has(String(id).replace(/(-p)?(-[tw])?$/, ''))) await dbDelete('files', id); // "-p" = prévia leve, "-t" = miniaturas, "-w" = onda do som
+  for (const id of await dbKeys('files')) if (!used.has(String(id).replace(/(-p\d*)?(-[tw])?$/, ''))) await dbDelete('files', id); // "-p" = prévia leve, "-t" = miniaturas, "-w" = onda do som
 }
 
 const libId = (file) => String(file).replace(/^lib:/, '');
