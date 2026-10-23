@@ -26,6 +26,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 if (!process.env.VE_PROD) process.env.VITE_DEV = '1';
 process.env.VE_E2E = '1';
 process.env.VE_LIB_DIR = LIB;
+process.env.VE_STICKERS_DIR = path.join(OUT, 'adesivos');
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(MEDIA, { recursive: true });
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -972,6 +973,81 @@ test('inspetor: arrastar o nome do controle ajusta o valor (um passo só no desf
   eq(await state(`s.past.length`), past0 + 1, 'um único passo de desfazer');
   await key('z', ['control']);
   near((await clipOf(cl[1].id)).transform?.opacity ?? 1, 1, 0.001, 'desfazer volta a 100%');
+});
+
+test('adesivos: importar de qualquer tipo (PNG com transparência, JPG, GIF animado, SVG) e usar no projeto', async () => {
+  await js(`window.__ve.ops.goHome()`);
+  await newProject();
+  const png = path.join(MEDIA, 'st-meio.png');
+  execFileSync(FF, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red@1.0:s=400x400,format=rgba', '-vf', "geq=r='255':g='0':b='0':a='if(lt(X,200),255,0)'", '-frames:v', '1', png]);
+  const jpg = path.join(MEDIA, 'st.jpg');
+  execFileSync(FF, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=300x300', '-frames:v', '1', jpg]);
+  const gif = path.join(MEDIA, 'st-anim.gif');
+  execFileSync(FF, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=160x160:rate=10:duration=1', gif]);
+  const svg = path.join(MEDIA, 'st.svg');
+  fs.writeFileSync(svg, '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><circle cx="100" cy="100" r="90" fill="#ff0066"/><text x="50" y="115" font-size="40" fill="white">SVG</text></svg>');
+  const bad = path.join(MEDIA, 'nao-e-imagem.txt');
+  fs.writeFileSync(bad, 'texto qualquer');
+  const added = await js(`window.__ve.ops.importStickers(${JSON.stringify([png, jpg, gif, svg, bad])})`);
+  eq(added.length, 4, 'adesivos importados (o .txt é recusado)');
+  ok(await state(`s.toast?.kind === 'error'`), 'aviso do arquivo recusado');
+  const list = await js(`window.api.stickersList()`);
+  ok(list.some((x) => /\.alpha\.webm$/.test(x.file)), 'GIF virou WebM com transparência');
+  ok(list.some((x) => /st\.png$/.test(x.file)), 'SVG virou PNG');
+  // painel
+  await js(`document.querySelectorAll('.left-tab')[6].click()`);
+  await waitFor(() => js(`document.querySelectorAll('.mine-item').length >= 4`), 5000, 'adesivos na lista');
+  await sleep(500);
+  await shot('11-adesivos');
+  const n0 = await state(`s.project.clips.length`);
+  await js(`document.querySelectorAll('.mine-item')[0].click()`);
+  await waitFor(() => state(`s.project.clips.length === ${n0 + 1}`), 8000, 'adesivo adicionado');
+  const c = await state(`s.project.clips[s.project.clips.length - 1]`);
+  near(c.transform.scale, 0.35, 0.001, 'tamanho de adesivo');
+  ok(c.anim?.in?.type === 'pop', 'entrada pop');
+});
+
+test('adesivos: transparência e GIF animado saem corretos na exportação; emoji aparece', async () => {
+  await js(`window.__ve.ops.goHome()`);
+  await newProject();
+  await importAll([M.vidA]);
+  await addByName('a-720p.mp4');
+  const list = await js(`window.api.stickersList()`);
+  const half = list.find((x) => /st-meio\.png$/.test(x.file));
+  const anim = list.find((x) => /st-anim\.alpha\.webm$/.test(x.file));
+  ok(half && anim, 'adesivos de teste existem');
+  await js(`window.__ve.ops.addStickerFile(${JSON.stringify(half.file)})`);
+  await waitFor(() => state(`s.project.clips.length === 2`), 8000, 'adesivo meio-transparente');
+  await js(`window.__ve.useStore.getState().commit((p) => { const c = p.clips[1]; c.transform.scale = 2.2; delete c.anim; c.out = 3; })`);
+  await js(`window.__ve.ops.addStickerFile(${JSON.stringify(anim.file)})`);
+  await waitFor(() => state(`s.project.clips.length === 3`), 8000, 'GIF animado');
+  await js(`window.__ve.ops.addSticker('🔥', 'none')`);
+  await js(`window.__ve.useStore.getState().commit((p) => { p.clips[1].start = 0; p.clips[1].out = 1.5; p.clips[2].start = 0; p.clips[2].out = Math.min(p.clips[2].out, 1.5); const t = p.clips[3]; t.start = 2; t.out = 1.5; t.anim.in.type = 'none'; })`);
+  const out = path.join(OUT, 'adesivos.mp4');
+  dialog.showSaveDialog = async () => ({ canceled: false, filePath: out });
+  await js(`window.__ve.useStore.setState({ exportOpen: true })`);
+  await waitFor(() => q('.export-modal'), 4000, 'diálogo de exportação');
+  await click('.export-modal button', '720p');
+  await click('.export-modal button', 'Menor arquivo');
+  await click('.export-modal .primary');
+  await waitFor(() => js(`/pronto|concluíd|Exportado/i.test(document.querySelector('.export-modal')?.textContent || '')`), 120000, 'exportação concluída');
+  const px = (x, y, w = 40, h = 40, at = 0.5) => {
+    const raw = execFileSync(FF, ['-v', 'error', '-ss', String(at), '-i', out, '-frames:v', '1', '-vf', `crop=${w}:${h}:${x}:${y},scale=1:1,format=rgb24`, '-f', 'rawvideo', '-']);
+    return [raw[0], raw[1], raw[2]];
+  };
+  const left = px(100, 300, 20, 20); // metade opaca vermelha do adesivo (cobre o vídeo)
+  const right = px(1100, 100, 20, 20); // metade transparente: aparece o vídeo por baixo
+  console.log('   pixel esquerda (adesivo)', left, '· direita (transparente)', right);
+  ok(left[0] > 200 && left[1] < 60 && left[2] < 60, 'metade opaca deveria ser vermelha: ' + left);
+  ok(!(right[0] > 200 && right[1] < 60 && right[2] < 60), 'metade transparente não pode ficar vermelha/preta: ' + right);
+  ok(right[0] + right[1] + right[2] > 30, 'a metade transparente mostra o vídeo (não preto): ' + right);
+  // emoji 🔥 no centro (laranja/amarelo/vermelho vivo, não só o vídeo de teste)
+  const frame = execFileSync(FF, ['-v', 'error', '-ss', '2.6', '-i', out, '-frames:v', '1', '-vf', 'crop=200:200:540:260,scale=8:8,format=rgb24', '-f', 'rawvideo', '-']);
+  let warm = 0;
+  for (let i = 0; i < frame.length; i += 3) if (frame[i] > 180 && frame[i + 1] > 60 && frame[i + 1] < 200 && frame[i + 2] < 90) warm++;
+  console.log('   pixels de cor de fogo no centro:', warm, 'de 64');
+  ok(warm >= 3, 'o emoji de fogo não apareceu no vídeo exportado');
+  await js(`window.__ve.useStore.setState({ exportOpen: false })`);
 });
 
 test('janela mínima (1100×680): nada vaza para fora da tela', async () => {

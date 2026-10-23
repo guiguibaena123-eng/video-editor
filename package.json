@@ -1,7 +1,7 @@
 {
   "name": "video-editor",
   "productName": "Video Editor",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Editor de vídeo para desktop",
   "main": "electron/main.cjs",
   "type": "module",
@@ -75,6 +75,7 @@
     "@fontsource/playfair-display": "^5.3.0",
     "@fontsource/poppins": "^5.3.0",
     "@fontsource/roboto-slab": "^5.3.0",
+    "@twemoji/svg": "^15.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",

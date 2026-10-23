@@ -218,3 +218,12 @@ Cuidado: um `scale` com `out_color_matrix` e fonte sem matriz marcada converte 6
 - **Auditoria**: teste `auditoria` clica em ~330 botões de todas as abas sem erro; testes `funcional:` conferem que as 18 transições, os 51 efeitos, 53 filtros, 41 looks,
   34 câmeras, 16 estilos de texto, 5 estilos de legenda, adesivos, 9 modelos, máscaras, mesclagem, espelhar e velocidade realmente aplicam pelo painel.
   O teste `boot` limpa `localStorage` (as preferências de seções abertas contaminavam os outros testes).
+
+### Adesivos: emojis em imagem + importação sem restrições (23/10/2026)
+- **Emojis**: os 72 do painel viraram imagens vetoriais Twemoji (`src/emoji/*.svg`, `src/emojiImg.js`; CC-BY 4.0, ver `docs/LICENCAS.md`, crédito na janela de atalhos). `drawTextClip` desenha a
+  imagem quando `clip.sticker` (mesmas animações/sombra); `loadClipAssets` espera a imagem antes de exportar. A fonte `@fontsource/noto-color-emoji` foi testada e descartada: carrega mas
+  não pinta nada no canvas. Emojis da Apple NÃO foram usados (arte protegida; só 64 px).
+- **Importar adesivos** (painel Adesivos → "Meus adesivos", pasta `Documentos\Video Editor\Adesivos`, `VE_STICKERS_DIR` nos testes): qualquer imagem (png, jpg, webp, bmp, tiff, avif, ico…), vídeo, GIF/APNG animado
+  (viram `.alpha.webm` VP9 com transparência) e SVG (desenhado em PNG 1536 px pelo app). Arrastar arquivos para o painel também importa. Arquivo que o app não abre (ex.: .txt) é recusado com aviso.
+  Clicar coloca numa camada nova, escala 35% e entrada "pop" (`ops.addStickerFile`).
+- **Transparência**: `probe` devolve `alpha`; o exportador mantém o canal alfa (`alphaFree` falso) e decodifica WebM com alfa via `-c:v libvpx-vp9`. Bug achado: o ffprobe lê qualquer .txt como vídeo "ansi" — agora recusado.

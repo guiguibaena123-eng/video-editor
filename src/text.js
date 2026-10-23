@@ -1,6 +1,7 @@
 // Desenho de textos no canvas. A prévia e a exportação usam exatamente estas funções,
 // então o vídeo final sai igual ao que aparece no player.
 import { fontInfo } from './fonts';
+import { emojiImage, emojiLoaded } from './emojiImg';
 import { clipDur, DEFAULT_TRANSFORM } from './store';
 
 export const DEFAULT_STYLE = {
@@ -88,6 +89,8 @@ export function ensureFont(font) {
   return false;
 }
 export const loadFont = (st) => document.fonts.load(fontString(withStyle(st), 64));
+// Tudo que o clipe de texto/adesivo precisa estar carregado para desenhar (fonte ou imagem do emoji).
+export const loadClipAssets = (c) => Promise.all([loadFont(c.text), c.sticker ? emojiLoaded(withStyle(c.text).content) : null]);
 
 // ---------- animação ----------
 
@@ -245,6 +248,24 @@ export function drawTextClip(g, clip, local, W, H, settings, opts = {}) {
   g.rotate(((tr.rotation + a.rotation) * Math.PI) / 180);
   g.scale(scale, scale);
   if (a.blur > 0.05) g.filter = `blur(${a.blur * k}px)`;
+  // Adesivo de emoji: desenha a imagem vetorial (em vez do texto), no mesmo lugar e com as mesmas animações.
+  if (clip.sticker) {
+    const im = emojiImage(st.content);
+    if (im) {
+      const size = L.px * 1.15;
+      if (st.shadow.enabled) {
+        const rad = (st.shadow.angle * Math.PI) / 180;
+        const d = st.shadow.distance * k * scale;
+        g.shadowColor = hexA(st.shadow.color, st.shadow.opacity);
+        g.shadowBlur = st.shadow.blur * k * scale;
+        g.shadowOffsetX = Math.cos(rad) * d;
+        g.shadowOffsetY = Math.sin(rad) * d;
+      }
+      g.drawImage(im, -size / 2, -size / 2, size, size);
+      g.restore();
+      return;
+    }
+  }
   g.font = font;
   g.letterSpacing = `${st.letterSpacing * k}px`;
   g.textBaseline = 'middle';

@@ -34,7 +34,7 @@ export const projectData = (s = useStore.getState()) => ({
   app: 'video-editor',
   version: 1,
   ...s.project,
-  media: s.media.map(({ id, path, name, type, duration, width, height, hasAudio, fps, size }) => ({ id, path, name, type, duration, width, height, hasAudio, fps, size })),
+  media: s.media.map(({ id, path, name, type, duration, width, height, hasAudio, fps, size, alpha }) => ({ id, path, name, type, duration, width, height, hasAudio, fps, size, alpha })),
 });
 
 let saving = null;

@@ -209,7 +209,7 @@ export default function ExportDialog() {
       const job = {
         // Duração e trechos de velocidade calculados aqui, com a mesma conta da prévia.
         project: { settings: project.settings, tracks: project.tracks, clips: project.clips.map((c) => withTiming(c)) },
-        media: Object.fromEntries([...used.values()].map((m) => [m.id, { path: m.path, type: m.type, width: m.width, height: m.height, hasAudio: m.hasAudio }])),
+        media: Object.fromEntries([...used.values()].map((m) => [m.id, { path: m.path, type: m.type, width: m.width, height: m.height, hasAudio: m.hasAudio, alpha: m.alpha }])),
         output: { ...size, fps, crf, codec, output },
         assetDir,
         textAssets,

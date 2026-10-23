@@ -95,7 +95,8 @@ function buildExport(job) {
       if (!m || !m.width || !m.height) continue;
       const d = dur(c);
       if (m.type === 'image') args.push('-loop', '1', '-framerate', String(fps), '-t', num(d), '-i', m.path);
-      else args.push('-ss', num(c.in), '-t', num(c.out - c.in), '-i', m.path);
+      // WebM com transparência (adesivos animados): só o decodificador libvpx lê o canal alfa.
+      else args.push('-ss', num(c.in), '-t', num(c.out - c.in), ...(m.alpha && /\.webm$/i.test(m.path) ? ['-c:v', 'libvpx-vp9'] : []), '-i', m.path);
       const i = inputs++;
       clipInput[c.id] = i;
 
@@ -368,7 +369,7 @@ function buildExport(job) {
       }
       // Clipe sem transparência, giro nem efeitos de cor/máscara: fica em YUV o caminho todo (sem ida e volta por RGB),
       // então o vídeo sai igual ao original (só reduzido, se for o caso).
-      const alphaFree = opacity >= 1 && !rad && !(c._chroma || c._lut || c._vig > 0 || c._cam || c._fx || c._mask);
+      const alphaFree = opacity >= 1 && !rad && !m.alpha && !(c._chroma || c._lut || c._vig > 0 || c._cam || c._fx || c._mask);
       // Um único scale faz tudo (tamanho + matriz BT.709 de entrada e saída): se a fonte não tem a matriz marcada, um segundo
       // scale a trataria como BT.601 e mudaria as cores.
       if (alphaFree) chain.push(`scale=${w}:${h}:${SCALE}:in_color_matrix=bt709:out_color_matrix=bt709:out_range=tv`, 'format=yuv420p');

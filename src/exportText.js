@@ -4,7 +4,7 @@
 //  - uma sequência de quadros na animação de saída.
 // Textos com animação de repetição viram uma sequência do começo ao fim.
 import { clipDur } from './store';
-import { drawTextClip, animSpans, loadFont } from './text';
+import { drawTextClip, animSpans, loadClipAssets } from './text';
 import { transformAt, hasKeyframes } from './keyframes';
 
 const toPng = (canvas) =>
@@ -23,7 +23,7 @@ export function textFrameCount(clips, fps) {
 }
 
 export async function renderTextAssets(clips, { width: W, height: H, fps, settings, dir, onFrame, isCanceled }) {
-  await Promise.all(clips.map((c) => loadFont(c.text)));
+  await Promise.all(clips.map((c) => loadClipAssets(c)));
   const canvas = document.createElement('canvas');
   canvas.width = W;
   canvas.height = H;

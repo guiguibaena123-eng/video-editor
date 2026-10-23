@@ -46,6 +46,7 @@ export default function ShortcutsDialog({ onClose }) {
             </div>
           ))}
         </div>
+        <p className="credits muted small-text">Emojis dos adesivos: Twemoji (CC-BY 4.0).</p>
       </div>
     </div>
   );

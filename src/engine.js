@@ -127,6 +127,7 @@ export class Engine {
     this.onHide = () => document.hidden && this.onHidden();
     document.addEventListener('visibilitychange', this.onHide);
     this.onFonts = () => this.invalidate(300);
+    window.addEventListener('emoji-loaded', this.onFonts);
     document.fonts?.addEventListener?.('loadingdone', this.onFonts);
     onLutReady(() => this.invalidate(300));
     this.invalidate(1000);
@@ -140,6 +141,7 @@ export class Engine {
   detach() {
     this.unsub?.();
     document.fonts?.removeEventListener?.('loadingdone', this.onFonts);
+    window.removeEventListener('emoji-loaded', this.onFonts);
     document.removeEventListener('visibilitychange', this.onHide);
     clearTimeout(this.coolT);
     cancelAnimationFrame(this.raf);

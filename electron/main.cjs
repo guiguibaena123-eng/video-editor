@@ -16,7 +16,7 @@ const FFPROBE = unpacked(require('ffprobe-static').path);
 
 const VIDEO_EXT = ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi'];
 const AUDIO_EXT = ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'opus'];
-const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'webp', 'bmp'];
+const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tif', 'tiff', 'avif', 'ico', 'jfif'];
 const MIME = {
   mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska', avi: 'video/x-msvideo',
   mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', flac: 'audio/flac', opus: 'audio/ogg',
@@ -167,7 +167,10 @@ async function probe(file) {
   const vs = streams.find((s) => s.codec_type === 'video' && !(s.disposition && s.disposition.attached_pic));
   const as = streams.find((s) => s.codec_type === 'audio');
   const isImage = IMAGE_EXT.includes(ext);
-  const type = isImage ? 'image' : vs ? 'video' : as ? 'audio' : null;
+  // O ffprobe lê qualquer arquivo de texto como "vídeo" de arte ANSI: não é mídia.
+  const TEXT_CODECS = ['ansi', 'bintext', 'xbin', 'idf', 'tty'];
+  const isTextArt = !!vs && TEXT_CODECS.includes(vs.codec_name);
+  const type = isImage ? 'image' : vs && !isTextArt ? 'video' : as ? 'audio' : null;
   if (!type) throw new Error('Formato não suportado');
   let width = (vs && vs.width) || 0;
   let height = (vs && vs.height) || 0;
@@ -181,6 +184,8 @@ async function probe(file) {
     width,
     height,
     hasAudio: !!as && !isImage,
+    // Tem transparência (PNG/WebP/GIF com alfa, WebM com canal alfa): o exportador mantém o canal alfa.
+    alpha: !!vs && (/^(rgba|bgra|argb|abgr|yuva|ya8|ya16|gbrap|pal8)/.test(vs.pix_fmt || '') || String((vs.tags && (vs.tags.alpha_mode || vs.tags.ALPHA_MODE)) || '') === '1'),
     fps: vs ? Math.round(parseRate(vs.avg_frame_rate || vs.r_frame_rate) * 100) / 100 : 0,
     size: Number(j.format && j.format.size) || 0,
   };
@@ -252,6 +257,94 @@ function registerIpc() {
     if (!isAllowed(file)) throw new Error('Arquivo não autorizado');
     return fn(file, ...rest);
   };
+
+  // ---------- meus adesivos (Documentos\Video Editor\Adesivos) ----------
+  // Qualquer imagem, GIF animado, SVG ou vídeo. GIF/APNG viram WebM com transparência (toca no player e exporta);
+  // SVG é desenhado pelo app (que chama stickers:saveRaster com o PNG pronto); o resto é copiado como veio.
+  const stickerDir = () => process.env.VE_STICKERS_DIR || path.join(app.getPath('documents'), 'Video Editor', 'Adesivos');
+  const STICKER_MEDIA = new Set([...VIDEO_EXT, ...IMAGE_EXT, 'gif', 'apng', 'tif', 'tiff', 'avif', 'ico', 'heic', 'jfif']);
+  const uniqueIn = async (dir, name) => {
+    const ext = path.extname(name);
+    const base = path.basename(name, ext).replace(/[^\p{L}\p{N}._ -]/gu, '_').slice(0, 60) || 'adesivo';
+    let out = path.join(dir, base + ext);
+    for (let i = 2; fs.existsSync(out); i++) out = path.join(dir, `${base} (${i})${ext}`);
+    return out;
+  };
+  const listStickers = async () => {
+    const dir = stickerDir();
+    await fs.promises.mkdir(dir, { recursive: true });
+    const out = [];
+    for (const name of await fs.promises.readdir(dir)) {
+      const file = path.join(dir, name);
+      const st = await fs.promises.stat(file).catch(() => null);
+      if (!st || !st.isFile()) continue;
+      allow(file);
+      out.push({ file, name, mtime: st.mtimeMs, video: /\.webm$|\.(mp4|mov|m4v|mkv|avi)$/i.test(name) });
+    }
+    return out.sort((a, b) => b.mtime - a.mtime);
+  };
+  const importStickerPaths = async (paths) => {
+    const dir = stickerDir();
+    await fs.promises.mkdir(dir, { recursive: true });
+    const added = [];
+    const svgs = [];
+    const failed = [];
+    for (const src of paths) {
+      try {
+        const ext = path.extname(src).slice(1).toLowerCase();
+        const name = path.basename(src);
+        if (ext === 'svg') {
+          svgs.push({ name, text: await fs.promises.readFile(src, 'utf8') });
+          continue;
+        }
+        if (ext === 'gif' || ext === 'apng') {
+          const out = await uniqueIn(dir, path.basename(name, path.extname(name)) + '.alpha.webm');
+          await run(FFMPEG, ['-v', 'error', '-y', '-i', src, '-an', '-c:v', 'libvpx-vp9', '-pix_fmt', 'yuva420p', '-auto-alt-ref', '0', '-b:v', '0', '-crf', '22', '-row-mt', '1', out]);
+          allow(out);
+          added.push(out);
+          continue;
+        }
+        const out = await uniqueIn(dir, name);
+        await fs.promises.copyFile(src, out);
+        allow(out);
+        try {
+          await probe(out); // confirma que o app consegue abrir (senão não entra na lista)
+        } catch (e) {
+          await fs.promises.rm(out, { force: true });
+          throw e;
+        }
+        added.push(out);
+      } catch (e) {
+        failed.push(`${path.basename(src)}: ${String(e.message || e).split('\n').pop().slice(0, 120)}`);
+      }
+    }
+    return { added, svgs, failed };
+  };
+  ipcMain.handle('stickers:list', listStickers);
+  ipcMain.handle('stickers:import', async () => {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Importar adesivos',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Imagens, GIFs, SVG e vídeos', extensions: [...STICKER_MEDIA, 'svg'] }, { name: 'Todos os arquivos', extensions: ['*'] }],
+    });
+    if (r.canceled) return { added: [], svgs: [], failed: [] };
+    return importStickerPaths(r.filePaths);
+  });
+  ipcMain.handle('stickers:importPaths', (_e, paths) => importStickerPaths((paths || []).filter((p) => typeof p === 'string')));
+  ipcMain.handle('stickers:saveRaster', async (_e, name, bytes) => {
+    const dir = stickerDir();
+    await fs.promises.mkdir(dir, { recursive: true });
+    const out = await uniqueIn(dir, path.basename(String(name), path.extname(String(name))) + '.png');
+    await fs.promises.writeFile(out, Buffer.from(bytes));
+    allow(out);
+    return out;
+  });
+  ipcMain.handle('stickers:remove', async (_e, file) => {
+    const full = path.resolve(String(file));
+    if (!full.toLowerCase().startsWith(path.resolve(stickerDir()).toLowerCase() + path.sep)) throw new Error('Fora da pasta de adesivos');
+    await fs.promises.rm(full, { force: true });
+  });
+
   ipcMain.handle('media:probe', guard(probe));
   ipcMain.handle('media:thumbs', guard(thumbnails));
   ipcMain.handle('media:waveform', guard(waveform));

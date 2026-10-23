@@ -922,6 +922,72 @@ export function addSticker(emoji, loop = 'none') {
   useStore.setState({ selection: [id] });
 }
 
+// ---------- adesivos importados (qualquer imagem, GIF, SVG ou vídeo) ----------
+
+// SVG vira PNG transparente (até 2048 px) desenhado pelo próprio app.
+async function rasterizeSvg(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const nw = img.naturalWidth || 512;
+    const nh = img.naturalHeight || 512;
+    const k = 1536 / Math.max(nw, nh); // lado maior em 1536 px: nítido mesmo em adesivo grande
+    const w = Math.max(2, Math.round(nw * k));
+    const h = Math.max(2, Math.round(nh * k));
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
+    return window.api.stickersSaveRaster(name, new Uint8Array(await blob.arrayBuffer()));
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Importa arquivos para a pasta de adesivos. "paths" = caminhos escolhidos (arrastar) ou nada (abre a janela de escolha).
+export async function importStickers(paths) {
+  const { notify } = useStore.getState();
+  try {
+    const r = paths ? await window.api.stickersImportPaths(paths) : await window.api.stickersImport();
+    for (const s of r.svgs) {
+      try {
+        r.added.push(await rasterizeSvg(s.name, s.text));
+      } catch {
+        r.failed.push(`${s.name}: SVG inválido`);
+      }
+    }
+    if (r.failed.length) notify(`Não consegui importar: ${r.failed.join(' · ')}`, 'error');
+    else if (r.added.length) notify(`${r.added.length} ${r.added.length === 1 ? 'adesivo importado' : 'adesivos importados'}.`);
+    return r.added;
+  } catch (err) {
+    notify('Erro ao importar adesivos: ' + cleanError(err), 'error');
+    return [];
+  }
+}
+
+// Coloca um adesivo importado no cursor, numa camada nova acima do vídeo, com tamanho de adesivo e entrada "pop".
+export async function addStickerFile(file) {
+  await window.api.allowPaths([file]);
+  let media = useStore.getState().media.find((m) => m.path.toLowerCase() === file.toLowerCase());
+  if (!media) {
+    const added = await importPaths([file]);
+    media = added[0];
+  }
+  if (!media) return;
+  addMediaToTimeline(media, { newTrack: true });
+  const id = useStore.getState().selection[0];
+  if (!id) return;
+  useStore.getState().commit((p) => {
+    const c = p.clips.find((x) => x.id === id);
+    if (!c) return;
+    c.transform = { ...DEFAULT_TRANSFORM, ...c.transform, scale: 0.35 };
+    c.anim = withAnim({ in: { type: 'pop', dur: 0.4 } });
+  });
+}
+
 // Ajusta o tamanho dos clipes da trilha principal para as trocas caírem nas batidas da música.
 // "every" = a cada quantas batidas troca de clipe. Só aparam o final do clipe (nunca esticam o vídeo).
 export function cutToBeats(musicId, every = 1) {
