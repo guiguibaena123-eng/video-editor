@@ -17,6 +17,12 @@ export const TRANSITIONS = [
   ['zoomOut', 'Zoom saindo'],
   ['spin', 'Girar'],
   ['blur', 'Desfocar'],
+  ['whipL', 'Chicote ←'],
+  ['whipR', 'Chicote →'],
+  ['dissolveZoom', 'Dissolver com zoom'],
+  ['pop', 'Estourar'],
+  ['drop', 'Cair'],
+  ['tilt', 'Inclinar'],
 ];
 export const DEFAULT_TRANSITION_DUR = 0.6;
 
@@ -39,10 +45,21 @@ const easeSpeed = (u) => (u < 0.5 ? 12 * u * u : 3 * (2 - 2 * u) * (2 - 2 * u)) 
 
 // Zoom e giro ganham a mola (ficam "de batida"); deslizar e empurrar ficam com a curva
 // clássica (mais sóbrios, como uma cortina puxada).
-const SPRING = new Set(['zoomIn', 'zoomOut', 'spin']);
-const shapeOf = (type, u) => (SPRING.has(type) ? easeOutBack(u) : ease(u));
+const SPRING = new Set(['zoomIn', 'zoomOut', 'spin', 'pop', 'tilt']);
+// Queda com quicadas (gravidade): chega no chão, sobe um pouco e assenta.
+const easeOutBounce = (x) => {
+  const n1 = 7.5625;
+  const d1 = 2.75;
+  if (x < 1 / d1) return n1 * x * x;
+  if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75;
+  if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375;
+  return n1 * (x -= 2.625 / d1) * x + 0.984375;
+};
+// Chicote: arranque brusco e parada seca (curva mais "dura" que a padrão).
+const easeWhip = (x) => (x < 0.5 ? 16 * x ** 5 : 1 - (-2 * x + 2) ** 5 / 2);
+const shapeOf = (type, u) => (SPRING.has(type) ? easeOutBack(u) : type === 'drop' ? easeOutBounce(u) : type === 'whipL' || type === 'whipR' ? easeWhip(u) : ease(u));
 // Que tipos recebem o desfoque de movimento, e o quanto no pico.
-const BLUR_PEAK = { slideL: 9, slideR: 9, slideU: 9, slideD: 9, pushL: 10, pushR: 10, zoomIn: 14, zoomOut: 14, spin: 11 };
+const BLUR_PEAK = { slideL: 9, slideR: 9, slideU: 9, slideD: 9, pushL: 10, pushR: 10, zoomIn: 14, zoomOut: 14, spin: 11, whipL: 30, whipR: 30, drop: 8, tilt: 8 };
 const motionBlur = (type, u) => (BLUR_PEAK[type] || 0) * easeSpeed(u);
 
 // Clipe anterior (A) que a transição do clipe B cobre.
@@ -128,6 +145,33 @@ function applyIn(m, type, p, u) {
       m.blur += (1 - p) * 24;
       m.opacity *= clamp01(p);
       break;
+    case 'whipL':
+      m.dx += 1 - p;
+      m.blur += motionBlur(type, u);
+      break;
+    case 'whipR':
+      m.dx -= 1 - p;
+      m.blur += motionBlur(type, u);
+      break;
+    case 'dissolveZoom':
+      m.scale *= 1.14 - 0.14 * p;
+      m.opacity *= clamp01(p);
+      break;
+    case 'pop':
+      // Nasce pequeno e estoura um pouco além do tamanho final (mola) antes de assentar.
+      m.scale *= 0.45 + 0.55 * p;
+      m.opacity *= clamp01(p * 2);
+      break;
+    case 'drop':
+      m.dy += 1 - p; // p quica (easeOutBounce): bate no chão e sobe um pouco
+      m.blur += motionBlur(type, u);
+      break;
+    case 'tilt':
+      m.rotation += (1 - p) * -22;
+      m.dx += (1 - p) * 0.55;
+      m.opacity *= clamp01(p * 1.6);
+      m.blur += motionBlur(type, u);
+      break;
     default:
   }
 }
@@ -144,6 +188,17 @@ function applyOut(m, type, p, u) {
     case 'pushR':
       m.dx += p;
       m.blur += motionBlur(type, u);
+      break;
+    case 'whipL':
+      m.dx -= p;
+      m.blur += motionBlur(type, u);
+      break;
+    case 'whipR':
+      m.dx += p;
+      m.blur += motionBlur(type, u);
+      break;
+    case 'dissolveZoom':
+      m.scale *= 1 + 0.14 * p;
       break;
     case 'zoomOut':
       m.scale *= 1 + 0.6 * p; // mesma mola do zoomIn: um leve "empurrão" extra antes de sumir

@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   openMedia: () => ipcRenderer.invoke('media:open'),
@@ -17,6 +17,13 @@ contextBridge.exposeInMainWorld('api', {
   libraryRename: (file, name) => ipcRenderer.invoke('library:rename', file, name),
   libraryDuplicate: (file) => ipcRenderer.invoke('library:duplicate', file),
   libraryImport: () => ipcRenderer.invoke('library:import'),
+  libraryImportPath: (file) => ipcRenderer.invoke('library:importPath', file),
+  takePendingOpen: () => ipcRenderer.invoke('app:pendingOpen'),
+  onOpenFile: (cb) => {
+    const listener = (_e, file) => cb(file);
+    ipcRenderer.on('app:openFile', listener);
+    return () => ipcRenderer.removeListener('app:openFile', listener);
+  },
   libraryReveal: (file) => ipcRenderer.invoke('library:reveal', file),
   chooseExportPath: (name, ext) => ipcRenderer.invoke('export:choosePath', name, ext),
   startExport: (job) => ipcRenderer.invoke('export:start', job),
@@ -56,5 +63,7 @@ contextBridge.exposeInMainWorld('api', {
   openLut: () => ipcRenderer.invoke('lut:open'),
   readLut: (p) => ipcRenderer.invoke('lut:read', p),
   showItem: (p) => ipcRenderer.invoke('shell:showItem', p),
+  setUiZoom: (f) => webFrame.setZoomFactor(f),
+  getUiZoom: () => webFrame.getZoomFactor(),
   setDirty: (value) => ipcRenderer.send('app:dirty', value),
 });

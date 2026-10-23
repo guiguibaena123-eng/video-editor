@@ -171,3 +171,33 @@ leve é o caminho certo para 4K.
   anterior; recomeçar na chave mais próxima as perdia (quadros faltando a cada pulo) e, com `drawLag` oscilando o alvo entre dois
   quadros, causava uma tempestade de recomeços (99 em 3 s). Agora `Source.keyForRank(r)` acha o último quadro-chave cujo RANK
   (ordem de exibição) não passa de r, e saídas de uma sequência abandonada são ignoradas (`sentTs`).
+
+## Finalização do app de PC (23/10/2026)
+O mobile foi encerrado por decisão do usuário: o código (`src/mobile`, `src/web`, `liteEngine`, fluxo do GitHub Pages) continua no repositório, mas
+**fora do build do PC** — `vite.config.js` só inclui `mobile.html` com `VE_TARGET=pwa` (o workflow já define isso). O instalador do PC não leva mais o celular.
+
+- **Testes automáticos** (`npm run test:e2e`, `scripts/e2e/`): abre o Electron de verdade, gera mídia com o FFmpeg embutido e usa cliques/arrastes reais +
+  `window.__ve` (modo dev ou `?e2e`). `VE_PROD=1` testa a versão compilada (padrão para medir desempenho), `VE_PROFILE=1` imprime as funções que mais
+  gastam CPU, `VE_NOMINIFY=1` deixa o perfil legível, e um argumento filtra por nome (`npm run test:e2e -- estresse`). 32 testes: boot, criar/importar, linha
+  do tempo com mouse, exportação conferida com ffprobe (inclusive look+câmera+efeito+transição+texto+velocidade), 4K/HEVC, 179 variações de cor/efeito,
+  18 transições, memória (12 ciclos), layout em 5 tamanhos de janela, janelas/Esc, arquivo `.vedit` de fora, estresse (150 clipes).
+- **Robustez**: `ErrorBoundary` por painel (esquerdo, player, inspetor, linha do tempo — um painel que falha mostra aviso e o resto segue; salva o projeto) e
+  global; `render-process-gone` no processo principal oferece reiniciar; **instância única** + abrir `.vedit` por duplo clique (argumento, `second-instance`,
+  `library:importPath`, `ops.openVeditPath`) — antes a associação de arquivo existia mas não fazia nada.
+- **Responsividade**: divisores arrastáveis dos painéis esquerdo/direito (`ve.panelWidths`, duplo clique restaura; `.vresizer` usa `grid-area` com linhas de
+  início e fim, senão ele se posiciona no contêiner inteiro); altura inicial da linha do tempo ~36% da janela e nunca > 54vh; grade da mídia cabe 2 colunas
+  no painel mínimo; **zoom da interface** Ctrl +/−/0 (`webFrame.setZoomFactor`, `ve.uiZoom`).
+- **Movimento**: tokens `--ease-out/--dur-*` no fim de `styles.css`; entrada de tela (projetos↔editor), troca de aba (esquerda e inspetor, `key={tab}`),
+  seções, toast (o `rise` antigo sobrescrevia o `translateX(-50%)` e o aviso "pulava"), cartões de projeto em cascata, resposta ao clique (`:active`),
+  menu de contexto. Tudo respeita `prefers-reduced-motion`.
+- **Transições de vídeo**: 18 (novas: Chicote ←/→ com desfoque forte, Dissolver com zoom, Estourar com mola, Cair com quicadas, Inclinar). Só usam
+  dx/dy/escala/rotação/opacidade/desfoque, então prévia e exportação seguem iguais (conferido por exportação real).
+- **Bugs corrigidos**: arrastar um clipe para a direita só trocava de lugar depois de passar do meio do vizinho *com a borda de trás* (agora a borda da frente,
+  `insertionOrder(..., dir)`); Esc não fechava a janela de atalhos; menu de contexto ficava aberto atrás de diálogos; o salvamento automático travava a
+  interface 20–90 ms (miniatura JPEG síncrona → `toBlob`).
+- **Desempenho da linha do tempo** (150 clipes em 6 trilhas, versão compilada): zoom 166→~50–70 ms, seleção 42→~9 ms. Como: clipes só montados perto da janela
+  visível (`WIN_STEP` 400 px; os selecionados sempre), pico da onda em cache (`WeakMap`) e redesenho da onda com espera de 90 ms, zoom da roda do mouse
+  agrupado por quadro com `flushSync`, `TabStrip` sem leitura forçada de layout (medir e `scrollIntoView` em rAF), `contain` nos clipes/trilhas.
+- **Armadilhas**: `win.setSize` não tem efeito com a janela maximizada (o app maximiza ao abrir) → `win.unmaximize()` antes; telas maiores que o monitor de teste
+  se simulam com `setZoomFactor` < 1; `EFFECTS` é lista de arrays (`[tipo, nome, cat]`), não objetos; o servidor de teste usa a porta 5173 (feche o `vite` solto).
+

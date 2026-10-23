@@ -293,6 +293,7 @@ kbd {
 }
 
 .upper {
+  position: relative;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(250px, 21%) minmax(0, 1fr) minmax(280px, 22%);
@@ -431,7 +432,7 @@ kbd {
 
 .media-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
   gap: 12px 10px;
   padding: 12px;
 }
@@ -1334,6 +1335,7 @@ input[type='range']::-webkit-slider-thumb {
 .lane {
   position: relative;
   flex: 1;
+  contain: layout style;
 }
 .track-row.main .lane {
   background: rgba(255, 255, 255, 0.025);
@@ -1351,6 +1353,7 @@ input[type='range']::-webkit-slider-thumb {
   bottom: 0;
   border-radius: 6px;
   overflow: hidden;
+  contain: layout paint style; /* mexer num clipe não refaz o layout dos outros */
   cursor: grab;
   background: var(--clip-video);
   box-shadow: inset 0 0 0 1px var(--clip-video-edge);
@@ -1548,6 +1551,18 @@ input[type='range']::-webkit-slider-thumb {
   background: var(--raised);
   border: 1px solid var(--border-2);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  transform-origin: top left;
+  animation: menu-in 0.12s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-3px);
+  }
+}
+.context-menu button:focus-visible {
+  outline: none;
+  background: var(--raised-2);
 }
 .context-menu button {
   width: 100%;
@@ -1925,7 +1940,6 @@ input[type='range']::-webkit-slider-thumb {
   background: var(--raised);
   border: 1px solid var(--border-2);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-  animation: rise 0.18s ease-out;
 }
 .toast.error {
   border-color: rgba(255, 100, 100, 0.5);
@@ -2931,6 +2945,30 @@ input[type='range']::-webkit-slider-thumb {
 .tr-spin .tr-b {
   animation-name: tr-spin;
 }
+.tr-whipL .tr-b {
+  animation-name: tr-whip-l;
+}
+.tr-whipL .tr-a {
+  animation: tr-push-l 2.4s ease-in-out infinite;
+}
+.tr-whipR .tr-b {
+  animation-name: tr-whip-r;
+}
+.tr-whipR .tr-a {
+  animation: tr-push-r 2.4s ease-in-out infinite;
+}
+.tr-dissolveZoom .tr-b {
+  animation-name: tr-dissolve-zoom;
+}
+.tr-pop .tr-b {
+  animation-name: tr-pop;
+}
+.tr-drop .tr-b {
+  animation-name: tr-drop;
+}
+.tr-tilt .tr-b {
+  animation-name: tr-tilt;
+}
 .tr-blur .tr-b {
   animation-name: tr-blur;
 }
@@ -2977,6 +3015,35 @@ input[type='range']::-webkit-slider-thumb {
 @keyframes tr-spin {
   0%, 25% { transform: rotate(180deg) scale(0.1); opacity: 0; }
   60%, 100% { transform: rotate(0) scale(1); opacity: 1; }
+}
+@keyframes tr-whip-l {
+  0%, 25% { transform: translateX(100%); filter: blur(6px); }
+  50% { filter: blur(6px); }
+  60%, 100% { transform: translateX(0); filter: blur(0); }
+}
+@keyframes tr-whip-r {
+  0%, 25% { transform: translateX(-100%); filter: blur(6px); }
+  50% { filter: blur(6px); }
+  60%, 100% { transform: translateX(0); filter: blur(0); }
+}
+@keyframes tr-dissolve-zoom {
+  0%, 25% { transform: scale(1.14); opacity: 0; }
+  60%, 100% { transform: scale(1); opacity: 1; }
+}
+@keyframes tr-pop {
+  0%, 25% { transform: scale(0.45); opacity: 0; }
+  50% { transform: scale(1.08); opacity: 1; }
+  60%, 100% { transform: scale(1); opacity: 1; }
+}
+@keyframes tr-drop {
+  0%, 25% { transform: translateY(-100%); }
+  45% { transform: translateY(0); }
+  52% { transform: translateY(-9%); }
+  60%, 100% { transform: translateY(0); }
+}
+@keyframes tr-tilt {
+  0%, 25% { transform: translateX(55%) rotate(-22deg); opacity: 0; }
+  60%, 100% { transform: translateX(0) rotate(0); opacity: 1; }
 }
 @keyframes tr-blur {
   0%, 25% { filter: blur(8px); opacity: 0; }
@@ -4384,4 +4451,209 @@ select option {
 .save-state.busy i {
   background: var(--accent);
   animation: blink 1s infinite;
+}
+
+/* ---------- robustez: aviso de erro por painel ---------- */
+.boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 24px;
+  background: var(--panel);
+  color: var(--text-2);
+}
+.boundary-panel {
+  min-height: 0;
+  min-width: 0;
+}
+.boundary-app {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: var(--bg);
+}
+.boundary-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 440px;
+  color: var(--text);
+}
+.boundary-card h2 {
+  font-size: 20px;
+}
+.boundary-card p {
+  margin: 0;
+}
+.boundary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+/* ---------- divisores verticais dos painéis laterais ---------- */
+.vresizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  z-index: 6;
+  cursor: col-resize;
+  touch-action: none;
+}
+.vresizer[data-side='l'] {
+  grid-area: 1 / 1 / 2 / 2;
+  right: -5px;
+}
+.vresizer[data-side='r'] {
+  grid-area: 1 / 3 / 2 / 4;
+  left: -5px;
+}
+.vresizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: transparent;
+  transition: background 0.15s, width 0.15s, left 0.15s;
+}
+.vresizer:hover::after,
+body.col-resizing .vresizer::after {
+  background: var(--accent);
+  width: 3px;
+  left: 3px;
+}
+body.col-resizing {
+  cursor: col-resize;
+}
+body.col-resizing * {
+  user-select: none;
+}
+
+/* ================= movimento: um só conjunto de curvas e durações ================= */
+:root {
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-1: 0.12s;
+  --dur-2: 0.2s;
+  --dur-3: 0.32s;
+}
+
+@keyframes tab-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+}
+@keyframes view-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes view-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px) scale(0.97);
+  }
+}
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@keyframes sec-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* troca de tela (projetos <-> editor) e de aba */
+.app {
+  animation: view-in var(--dur-3) var(--ease-out);
+}
+.home-main {
+  animation: view-rise 0.36s var(--ease-out);
+}
+.left-panel > :not(.left-tabs),
+.inspector .panel-scroll {
+  animation: tab-in var(--dur-2) var(--ease-out);
+}
+.section:not(.closed) > :not(.section-head) {
+  animation: sec-in var(--dur-2) var(--ease-out);
+}
+.toast {
+  animation: toast-in 0.26s var(--ease-out);
+}
+.proj-card {
+  animation: card-in 0.4s var(--ease-out) backwards;
+  animation-delay: calc(var(--i, 0) * 32ms);
+}
+.modal {
+  animation: rise 0.22s var(--ease-out);
+}
+.modal-backdrop {
+  animation: fade 0.18s ease-out;
+}
+@keyframes rise {
+  from {
+    transform: translateY(10px) scale(0.985);
+    opacity: 0;
+  }
+}
+
+/* resposta ao toque/clique */
+.primary,
+.secondary,
+.danger,
+.ghost,
+.icon-btn,
+.left-tab,
+.tab,
+.chip,
+.mini-btn {
+  transition: background var(--dur-1), color var(--dur-1), box-shadow var(--dur-2), border-color var(--dur-1), transform 0.1s var(--ease-out), opacity var(--dur-1);
+}
+.primary:active:not(:disabled),
+.secondary:active:not(:disabled),
+.danger:active:not(:disabled),
+.ghost:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.icon-btn:active:not(:disabled),
+.mini-btn:active:not(:disabled) {
+  transform: scale(0.92);
+}
+.primary:hover:not(:disabled) {
+  box-shadow: 0 4px 18px rgba(255, 199, 44, 0.22);
+}
+.clip {
+  transition: box-shadow var(--dur-1);
+}
+.media-card,
+.tpl-card,
+.tr-card,
+.proj-card {
+  transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2), border-color var(--dur-1), background var(--dur-1);
+}
+.tpl-card:hover,
+.tr-card:hover {
+  transform: translateY(-1px);
+}
+.drop-overlay {
+  animation: fade 0.15s ease-out;
 }

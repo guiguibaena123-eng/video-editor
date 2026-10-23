@@ -47,3 +47,24 @@ export function dragPointer(e, onMove, onUp) {
 }
 
 export const isTyping = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+
+// Zoom da interface (Ctrl + / Ctrl - / Ctrl 0): ajuda em monitores grandes ou de alta resolução. Fica gravado.
+const UI_ZOOM_KEY = 've.uiZoom';
+export function loadUiZoom() {
+  let z = 1;
+  try {
+    z = Number(localStorage.getItem(UI_ZOOM_KEY)) || 1;
+  } catch {}
+  z = Math.min(1.6, Math.max(0.7, z));
+  window.api?.setUiZoom?.(z);
+  return z;
+}
+export function stepUiZoom(dir) {
+  const cur = window.api?.getUiZoom?.() || 1;
+  const next = dir === 0 ? 1 : Math.round(Math.min(1.6, Math.max(0.7, cur + dir * 0.1)) * 100) / 100;
+  window.api?.setUiZoom?.(next);
+  try {
+    localStorage.setItem(UI_ZOOM_KEY, String(next));
+  } catch {}
+  return next;
+}

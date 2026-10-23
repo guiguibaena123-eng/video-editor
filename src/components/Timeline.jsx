@@ -1,5 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
+import { flushSync } from 'react-dom';
 import { useStore, clipDur, clipEnd, projectDuration, packMain } from '../store';
 import { beatTimes } from '../audioPro';
 import { Icon } from '../icons';
@@ -18,6 +19,7 @@ const HEADER_W = 148;
 const RULER_H = 30;
 const SNAP_PX = 8;
 const MIN_CLIP = 0.1;
+const WIN_STEP = 400;
 const trackHeight = (t) => (t.kind === 'audio' ? 48 : t.main ? 72 : 58);
 
 // Posição de rolagem fica fora do estado principal para não redesenhar os clipes ao rolar.
@@ -36,6 +38,12 @@ export default function Timeline() {
   const [dropGhost, setDropGhost] = useState(null);
   const [menu, setMenu] = useState(null);
   const viewW = useView((s) => s.viewW);
+  // Só os clipes perto da parte visível são montados (projetos grandes ficam leves). A janela é medida em blocos
+  // de 400 px para a rolagem não redesenhar a cada pixel.
+  const winKey = useView((s) => `${Math.floor(s.scrollLeft / WIN_STEP)}:${Math.floor((s.scrollLeft + s.viewW) / WIN_STEP)}`);
+  const [wLo, wHi] = winKey.split(':').map(Number);
+  const pxFrom = (wLo - 1) * WIN_STEP;
+  const pxTo = (wHi + 2) * WIN_STEP;
 
   const mediaById = new Map(media.map((m) => [m.id, m]));
   const total = projectDuration(project);
@@ -59,6 +67,7 @@ export default function Timeline() {
   // Shift + roda: rolar para os lados. Alt + roda: rolar as trilhas para cima/baixo.
   useEffect(() => {
     const el = scrollRef.current;
+    const pending = { factor: 1, mx: 0, raf: 0 };
     const onWheel = (e) => {
       if (e.altKey) {
         e.preventDefault();
@@ -73,15 +82,22 @@ export default function Timeline() {
       // Touchpad deslizando para os lados: deixa rolar normalmente.
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
       e.preventDefault();
-      const s = useStore.getState();
+      // Vários eventos da roda no mesmo quadro viram um só zoom (mouse de 1000 Hz / touchpad).
       const rect = el.getBoundingClientRect();
-      const mx = Math.max(0, e.clientX - rect.left - HEADER_W);
-      const t = (el.scrollLeft + mx) / s.zoom;
+      pending.mx = Math.max(0, e.clientX - rect.left - HEADER_W);
       // Passo proporcional ao giro: suave no touchpad, ~20% por "clique" da roda.
-      const factor = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.06 : 0.0018));
-      const z = clamp(s.zoom * factor, 2, 600);
-      s.setZoom(z);
-      requestAnimationFrame(() => (el.scrollLeft = t * z - mx));
+      pending.factor *= Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.06 : 0.0018));
+      if (!pending.raf)
+        pending.raf = requestAnimationFrame(() => {
+          const s = useStore.getState();
+          const t = (el.scrollLeft + pending.mx) / s.zoom;
+          const z = clamp(s.zoom * pending.factor, 2, 600);
+          pending.factor = 1;
+          pending.raf = 0;
+          // flushSync: a largura da linha do tempo já está nova quando ajustamos a rolagem (sem "pulo" de um quadro).
+          flushSync(() => s.setZoom(z));
+          el.scrollLeft = t * z - pending.mx;
+        });
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
@@ -142,6 +158,7 @@ export default function Timeline() {
     let started = false;
     let newSide = null;
     let targetTrack = null;
+    let lastDelta = 0;
 
     dragPointer(
       e,
@@ -161,6 +178,7 @@ export default function Timeline() {
           }
         }
         const delta = Math.max(ns - orig.get(clip.id), -minStart);
+        lastDelta = delta;
         newSide = null;
         targetTrack = null;
         if (moving.length === 1) {
@@ -190,7 +208,7 @@ export default function Timeline() {
           }
           const main = q.tracks.find((t) => t.main);
           const moved = q.clips.filter((c) => ids.has(c.id));
-          if (q.settings.magnet && moved.some((c) => c.trackId === main.id)) packMain(q, insertionOrder(q, ids));
+          if (q.settings.magnet && moved.some((c) => c.trackId === main.id)) packMain(q, insertionOrder(q, ids, undefined, lastDelta));
           for (const c of moved) if (c.trackId !== main.id || !q.settings.magnet) placeClip(q, c, ids);
         });
       },
@@ -377,7 +395,7 @@ export default function Timeline() {
                 <TrackHeader track={track} />
                 <div className={'lane' + (track.locked ? ' locked' : '')} onPointerDown={onLaneDown}>
                   {project.clips
-                    .filter((c) => c.trackId === track.id)
+                    .filter((c) => c.trackId === track.id && (selected.has(c.id) || (clipEnd(c) * zoom >= pxFrom && c.start * zoom <= pxTo)))
                     .map((c) => (
                       <Clip
                         key={c.id}
@@ -712,36 +730,57 @@ function BeatMarks({ clip, wave, zoom }) {
   );
 }
 
+const peakCache = new WeakMap();
+function peakOf(wave) {
+  let m = peakCache.get(wave);
+  if (m === undefined) {
+    m = 0;
+    for (const v of wave.peaks) if (v > m) m = v;
+    peakCache.set(wave, m);
+  }
+  return m;
+}
+
 function Waveform({ clip, wave, width, height, color }) {
   const ref = useRef(null);
+  const drawn = useRef(false);
   useEffect(() => {
-    const c = ref.current;
-    if (!c) return;
-    const dpr = window.devicePixelRatio || 1;
-    const cw = Math.min(4096, Math.max(1, Math.round(width * dpr)));
-    const ch = Math.max(1, Math.round(height * dpr));
-    c.width = cw;
-    c.height = ch;
-    const g = c.getContext('2d');
-    g.clearRect(0, 0, cw, ch);
-    g.fillStyle = color;
-    const { peaks, rate } = wave;
-    const span = clip.out - clip.in;
-    // Escala pelo pico do arquivo para áudios baixos também ficarem visíveis.
-    let maxPeak = 0;
-    for (const v of peaks) if (v > maxPeak) maxPeak = v;
-    const gain = Math.min(2, clip.volume ?? 1) * Math.min(4, 0.95 / Math.max(maxPeak, 1e-3));
-    const step = Math.max(1, Math.round(2 * dpr));
-    for (let x = 0; x < cw; x += step) {
-      const t0 = clip.in + (x / cw) * span;
-      const t1 = clip.in + ((x + step) / cw) * span;
-      const i0 = Math.floor(t0 * rate);
-      const i1 = Math.max(i0 + 1, Math.ceil(t1 * rate));
-      let max = 0;
-      for (let i = i0; i < i1 && i < peaks.length; i++) if (peaks[i] > max) max = peaks[i];
-      const h = Math.max(1, Math.min(1, max * gain) * ch * 0.92);
-      g.fillRect(x, ch - h, Math.max(1, step - dpr), h);
+    const draw = () => {
+      const c = ref.current;
+      if (!c) return;
+      drawn.current = true;
+      const dpr = window.devicePixelRatio || 1;
+      const cw = Math.min(4096, Math.max(1, Math.round(width * dpr)));
+      const ch = Math.max(1, Math.round(height * dpr));
+      c.width = cw;
+      c.height = ch;
+      const g = c.getContext('2d');
+      g.clearRect(0, 0, cw, ch);
+      g.fillStyle = color;
+      const { peaks, rate } = wave;
+      const span = clip.out - clip.in;
+      // Escala pelo pico do arquivo para áudios baixos também ficarem visíveis.
+      const maxPeak = peakOf(wave);
+      const gain = Math.min(2, clip.volume ?? 1) * Math.min(4, 0.95 / Math.max(maxPeak, 1e-3));
+      const step = Math.max(1, Math.round(2 * dpr));
+      for (let x = 0; x < cw; x += step) {
+        const t0 = clip.in + (x / cw) * span;
+        const t1 = clip.in + ((x + step) / cw) * span;
+        const i0 = Math.floor(t0 * rate);
+        const i1 = Math.max(i0 + 1, Math.ceil(t1 * rate));
+        let max = 0;
+        for (let i = i0; i < i1 && i < peaks.length; i++) if (peaks[i] > max) max = peaks[i];
+        const h = Math.max(1, Math.min(1, max * gain) * ch * 0.92);
+        g.fillRect(x, ch - h, Math.max(1, step - dpr), h);
+      }
+    };
+    // O primeiro desenho é imediato; os seguintes esperam o zoom/aparo "assentar" (enquanto isso a onda só estica).
+    if (!drawn.current) {
+      draw();
+      return;
     }
+    const t = setTimeout(draw, 90);
+    return () => clearTimeout(t);
   }, [clip.in, clip.out, clip.volume, wave, width, height, color]);
   return <canvas ref={ref} className="waveform" style={{ width, height }} />;
 }
@@ -874,8 +913,30 @@ function ClipMenu({ x, y, onClose }) {
   }, [x, y]);
   useEffect(() => {
     const close = (e) => !ref.current?.contains(e.target) && onClose();
+    const key = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const items = [...ref.current.querySelectorAll('button')];
+        const i = items.indexOf(document.activeElement);
+        items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus();
+      }
+    };
+    const unsub = useStore.subscribe((s, p) => (s.exportOpen && !p.exportOpen) || (s.cropClipId && !p.cropClipId) || (s.recordOpen && !p.recordOpen) ? onClose() : null);
     window.addEventListener('pointerdown', close);
-    return () => window.removeEventListener('pointerdown', close);
+    window.addEventListener('keydown', key, true);
+    window.addEventListener('blur', onClose);
+    window.addEventListener('resize', onClose);
+    return () => {
+      unsub();
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', key, true);
+      window.removeEventListener('blur', onClose);
+      window.removeEventListener('resize', onClose);
+    };
   }, []);
   const item = (label, icon, fn, keys) => (
     <button

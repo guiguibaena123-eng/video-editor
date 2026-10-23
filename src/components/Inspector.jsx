@@ -30,6 +30,8 @@ function useClipUpdater(clipId) {
 }
 
 export default function Inspector() {
+  // Gancho dos testes automáticos: simula uma falha ao desenhar (nunca é ligado no uso normal).
+  if (useStore((s) => s.__crash)) throw new Error('falha simulada pelo teste');
   const selection = useStore((s) => s.selection);
   const clip = useStore((s) => (s.selection.length === 1 ? s.project.clips.find((c) => c.id === s.selection[0]) : null));
 
@@ -100,7 +102,7 @@ function ClipInspector({ clip }) {
         </div>
       </div>
       <TabStrip tabs={tabs} value={tab} onChange={setTab} />
-      <div className={'panel-scroll' + (track?.locked ? ' disabled' : '')}>
+      <div className={'panel-scroll' + (track?.locked ? ' disabled' : '')} key={tab}>
         {tab === 'video' && <VideoTab clip={clip} media={media} settings={settings} />}
         {tab === 'video' && <FlipStabilize clip={clip} media={media} />}
         {tab === 'video' && <BlendSection clip={clip} />}

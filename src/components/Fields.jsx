@@ -166,19 +166,40 @@ export function Switch({ checked, onChange, label }) {
 export function TabStrip({ tabs, value, onChange }) {
   const ref = useRef(null);
   const [edge, setEdge] = useState({ l: false, r: false });
+  // Medir só no próximo quadro: ler scrollWidth logo depois de mexer no DOM força um layout da página inteira.
+  const raf = useRef(0);
   const measure = () => {
-    const el = ref.current;
-    if (el) setEdge({ l: el.scrollLeft > 2, r: el.scrollLeft + el.clientWidth < el.scrollWidth - 2 });
+    cancelAnimationFrame(raf.current);
+    raf.current = requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      const l = el.scrollLeft > 2;
+      const r = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+      setEdge((e) => (e.l === l && e.r === r ? e : { l, r }));
+    });
   };
   useEffect(() => {
     measure();
     const el = ref.current;
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(raf.current);
+    };
   }, [tabs.length]);
+  // Traz a aba ativa para dentro da vista rolando só esta faixa (scrollIntoView rolaria o painel todo e força layout).
   useEffect(() => {
-    ref.current?.querySelector('.tab.on')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    const id = requestAnimationFrame(() => {
+      const el = ref.current;
+      const t = el?.querySelector('.tab.on');
+      if (!t) return;
+      const l = t.offsetLeft;
+      const r = l + t.offsetWidth;
+      if (l < el.scrollLeft) el.scrollLeft = Math.max(0, l - 10);
+      else if (r > el.scrollLeft + el.clientWidth) el.scrollLeft = r - el.clientWidth + 10;
+    });
+    return () => cancelAnimationFrame(id);
   }, [value]);
   return (
     <div className={'tabs-wrap' + (edge.l ? ' fade-l' : '') + (edge.r ? ' fade-r' : '')}>

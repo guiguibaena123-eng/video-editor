@@ -2,7 +2,6 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath } from 'node:url';
 
-// Duas entradas: index.html (PC, Electron) e mobile.html (app de celular instalável).
 export default defineConfig({
   plugins: [react()],
   base: './',
@@ -13,7 +12,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
-        mobile: fileURLToPath(new URL('./mobile.html', import.meta.url)),
       },
     },
   },

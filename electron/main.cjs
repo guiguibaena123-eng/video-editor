@@ -34,6 +34,7 @@ const allow = (p) => allowed.add(key(p));
 const isAllowed = (p) => allowed.has(key(p));
 
 let win = null;
+let pendingOpen = null;
 let dirty = false;
 let exportProc = null;
 const assetDirs = new Set();
@@ -61,11 +62,26 @@ function createWindow() {
   win.on('leave-full-screen', () => win.webContents.send('window:fullscreen', false));
 
   if (isDev) win.loadURL('http://localhost:5173');
-  else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), process.env.VE_E2E ? { query: { e2e: '1' } } : undefined);
 
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('http://localhost:5173')) e.preventDefault(); });
 
+  // Se a tela do editor travar ou cair, oferece reiniciar (o projeto é salvo sozinho a cada alteração).
+  win.webContents.on('render-process-gone', (_e, d) => {
+    if (d.reason === 'clean-exit' || d.reason === 'killed') return;
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'error',
+      buttons: ['Reiniciar o editor', 'Fechar'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'O editor parou',
+      message: 'A janela do editor foi encerrada por um erro inesperado.',
+      detail: 'Seus projetos ficam salvos automaticamente na biblioteca. Ao reiniciar, é só abrir o projeto de novo.',
+    });
+    if (choice === 0) win.reload();
+    else app.exit(1);
+  });
   win.on('closed', () => {
     for (const dir of assetDirs) fs.rmSync(dir, { recursive: true, force: true });
   });
@@ -348,10 +364,8 @@ function registerIpc() {
     return nf;
   });
   // Abrir um .vedit de qualquer pasta: entra na biblioteca como cópia (o original não é mexido).
-  ipcMain.handle('library:import', async () => {
-    const r = await dialog.showOpenDialog(win, { title: 'Abrir projeto', properties: ['openFile'], filters: [{ name: 'Projeto do Video Editor', extensions: ['vedit'] }] });
-    if (r.canceled) return null;
-    const data = JSON.parse(await fs.promises.readFile(r.filePaths[0], 'utf8'));
+  const importVedit = async (file) => {
+    const data = JSON.parse(await fs.promises.readFile(file, 'utf8'));
     if (data.app !== 'video-editor') throw new Error('Este arquivo não é um projeto do Video Editor.');
     await fs.promises.mkdir(libDir(), { recursive: true });
     const nf = newLibFile();
@@ -359,6 +373,21 @@ function registerIpc() {
     const clips = data.clips || [];
     await fs.promises.writeFile(sidecar(nf, '.meta.json'), JSON.stringify({ name: data.name, modified: Date.now(), clips: clips.length, aspect: data.settings?.aspect, width: data.settings?.width, height: data.settings?.height, duration: 0 }), 'utf8');
     return nf;
+  };
+  ipcMain.handle('library:import', async () => {
+    const r = await dialog.showOpenDialog(win, { title: 'Abrir projeto', properties: ['openFile'], filters: [{ name: 'Projeto do Video Editor', extensions: ['vedit'] }] });
+    if (r.canceled) return null;
+    return importVedit(r.filePaths[0]);
+  });
+  // Duplo clique num .vedit no Windows: o arquivo chega por argumento (ou pela 2ª instância).
+  ipcMain.handle('library:importPath', (_e, file) => {
+    if (typeof file !== 'string' || !/\.vedit$/i.test(file)) throw new Error('Arquivo inválido.');
+    return importVedit(file);
+  });
+  ipcMain.handle('app:pendingOpen', () => {
+    const f = pendingOpen;
+    pendingOpen = null;
+    return f;
   });
   ipcMain.handle('library:reveal', (_e, file) => shell.showItemInFolder(libFile(file)));
 
@@ -639,6 +668,20 @@ function registerIpc() {
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
+
+// Uma só janela do app: abrir outro .vedit com ele já aberto manda o arquivo para a janela existente.
+const veditArg = (argv) => argv.slice(1).find((a) => /\.vedit$/i.test(a) && fs.existsSync(a));
+if (!isDev && !process.env.VE_E2E && !app.requestSingleInstanceLock()) app.quit();
+else {
+  pendingOpen = veditArg(process.argv) || null;
+  app.on('second-instance', (_e, argv) => {
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    const f = veditArg(argv);
+    if (f) win.webContents.send('app:openFile', f);
+  });
+}
 
 app.whenReady().then(() => {
   if (!isDev) {

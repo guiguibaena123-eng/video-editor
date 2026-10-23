@@ -9,7 +9,6 @@ import { effectiveAudio } from './transitions';
 import { hasImageFx, imageFxAt, needsGLPass, withTrackFx } from './effects';
 import { lutFor, spatialOf, onLutReady } from './colorRuntime';
 import { useStore, clipEnd, projectDuration, mediaUrl, cropOf, croppedSize } from './store';
-import { takePrewarmed } from './web/registry';
 
 // iPhone/iPad: o navegador ignora o volume do elemento de mídia, então o som precisa passar pelo WebAudio.
 export const IOS_LIKE = typeof navigator !== 'undefined' && (/iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
@@ -402,7 +401,7 @@ export class Engine {
     }
     if (!entry) {
       // Vídeo importado agora: adota o elemento que já começou a carregar (celular); senão cria um novo.
-      const el = takePrewarmed(want) || document.createElement('video');
+      const el = document.createElement('video');
       el.crossOrigin = 'anonymous';
       el.preload = 'auto';
       el.playsInline = true;
@@ -976,7 +975,3 @@ function drawClip(g, src, m, clip, W, H, blur = 0, blend) {
 
 export let engine = new Engine();
 
-// O celular troca o motor por um próprio (src/liteEngine.js), antes de a tela abrir.
-export function setEngine(e) {
-  engine = e;
-}

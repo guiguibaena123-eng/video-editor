@@ -2,8 +2,9 @@
 // (depois de ~2,5 s sem mexer), com uma miniatura do quadro que aparece na tela inicial.
 import { useStore, projectDuration } from './store';
 
-// Miniatura (480 px de largura) do que está no player agora.
-export function captureThumb() {
+// Miniatura (480 px de largura) do que está no player agora. A compressão JPEG roda fora da thread principal
+// (toBlob), senão cada salvamento automático travava a interface por dezenas de milissegundos.
+export async function captureThumb() {
   const c = document.querySelector('.canvas-wrap canvas');
   if (!c || c.width < 8 || c.height < 8) return null;
   const W = 480;
@@ -16,7 +17,14 @@ export function captureThumb() {
   g.fillRect(0, 0, W, H);
   g.drawImage(c, 0, 0, W, H);
   try {
-    return off.toDataURL('image/jpeg', 0.74);
+    const blob = await new Promise((res) => off.toBlob(res, 'image/jpeg', 0.74));
+    if (!blob) return null;
+    return await new Promise((res) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result));
+      r.onerror = () => res(null);
+      r.readAsDataURL(blob);
+    });
   } catch {
     return null;
   }
@@ -51,7 +59,7 @@ export async function saveToLibrary({ thumb = true } = {}) {
         width: proj.settings.width,
         height: proj.settings.height,
       },
-      thumb: thumb && s.view === 'editor' ? captureThumb() : null,
+      thumb: thumb && s.view === 'editor' ? await captureThumb() : null,
     });
     // Só marca como salvo se nada mudou enquanto gravava.
     const now = useStore.getState();

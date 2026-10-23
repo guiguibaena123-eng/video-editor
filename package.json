@@ -1,7 +1,7 @@
 {
   "name": "video-editor",
   "productName": "Video Editor",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Editor de vídeo para desktop",
   "main": "electron/main.cjs",
   "type": "module",
@@ -9,6 +9,7 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV=1 electron .\"",
     "build": "vite build",
     "icons": "node scripts/make-icons.mjs",
+    "test:e2e": "node scripts/e2e/launch.cjs",
     "start": "vite build && electron .",
     "dist": "npm run icons && vite build && electron-builder --win"
   },
@@ -55,8 +56,6 @@
   "dependencies": {
     "ffmpeg-static": "^5.2.0",
     "ffprobe-static": "^3.1.0",
-    "mp4-muxer": "^5.2.2",
-    "mp4box": "^2.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^4.5.5"

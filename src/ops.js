@@ -120,10 +120,12 @@ export function addMediaToTimeline(media, opts = {}) {
 
 // Ordem na trilha principal quando clipes são soltos: o clipe movido entra antes
 // do clipe cujo meio fica depois do ponto onde foi solto.
-export function insertionOrder(p, ids, time) {
+// "dir" (arraste): >0 = clipe movido para a direita, <0 = para a esquerda. A troca de lugar acontece quando a borda da
+// frente do clipe cruza o meio do vizinho, igual nos dois sentidos.
+export function insertionOrder(p, ids, time, dir = 0) {
   const moved = ids instanceof Set ? ids : new Set([ids]);
   return (a, b) => {
-    const key = (c) => (moved.has(c.id) ? (time !== undefined && !(ids instanceof Set) ? time : c.start) : c.start + clipDur(c) / 2);
+    const key = (c) => (moved.has(c.id) ? (time !== undefined && !(ids instanceof Set) ? time : dir > 0 ? c.start + clipDur(c) : c.start) : c.start + clipDur(c) / 2);
     return key(a) - key(b);
   };
 }
@@ -712,6 +714,15 @@ export async function openProject() {
   try {
     const file = await window.api.libraryImport();
     if (file) await openLibraryProject(file);
+  } catch (err) {
+    useStore.getState().notify('Erro ao abrir: ' + cleanError(err), 'error');
+  }
+}
+
+// Abre um .vedit que chegou pelo Windows (duplo clique no arquivo).
+export async function openVeditPath(file) {
+  try {
+    await openLibraryProject(await window.api.libraryImportPath(file));
   } catch (err) {
     useStore.getState().notify('Erro ao abrir: ' + cleanError(err), 'error');
   }

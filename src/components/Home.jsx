@@ -202,10 +202,11 @@ export default function Home() {
               <span>Novo projeto</span>
             </button>
             {items === null && Array.from({ length: 5 }, (_, i) => <div key={i} className="proj-skel" />)}
-            {shown.map((it) => (
+            {shown.map((it, i) => (
               <article
                 key={it.file}
                 className="proj-card"
+                style={{ '--i': Math.min(i, 14) }}
                 tabIndex={0}
                 onClick={() => renaming !== it.file && openLibraryProject(it.file)}
                 onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && openLibraryProject(it.file)}
