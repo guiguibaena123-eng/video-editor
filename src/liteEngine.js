@@ -7,6 +7,7 @@ import { duckGainAt } from './audioPro';
 import { effectiveAudio } from './transitions';
 import { webBlob } from './web/registry';
 import { framesSupported, openSource, FramePlayer } from './web/frames';
+import { openAudio, pcmSupported, CHUNK } from './web/pcm';
 
 // Motor de reprodução do celular. Diferente do motor do PC (que desenha o que um <video> escondido mostra), aqui:
 //   • a IMAGEM vem de quadros que nós mesmos decodificamos (src/web/frames.js), escolhidos pelo relógio da linha do
@@ -27,6 +28,8 @@ export class LiteEngine extends Engine {
   nextLead = 3; // quantos segundos antes o próximo clipe começa a ser preparado
   audioLead = 0.08; // quanto o som é posto à frente ao ligar a frio (aprende o atraso real do aparelho)
   fpOn = framesSupported();
+  // Som pelo WebAudio (ver web/pcm.js). "?el" no endereço volta ao <audio> por clipe, para comparar.
+  pcmOn = pcmSupported() && !/[?&]el\b/.test(location.search) && localStorage.getItem('ve.el') !== '1';
   fpStats = { opened: 0, fallback: 0 };
 
   // Chegou algo novo (índice, bytes, quadro): parado, roda um passo já em seguida (sem esperar o próximo quadro de
@@ -74,15 +77,147 @@ export class LiteEngine extends Engine {
         e.el.src = mediaUrl(want);
         e.live = false;
       }
+      if (this.pcmOn && e.pcmState !== 'none') {
+        this.stopPcm(e);
+        this.openPcm(e, m);
+      }
       this.openVisual(e, m);
     }
     if (e) return e;
-    e = { mediaId: m.id, srcPath: want, el: null, fp: null, vel: null, snap: null, gain: null, live: false, snapped: false, dead: false, kind: m.type, lastCT: null, gen: 0 };
+    e = { mediaId: m.id, srcPath: want, el: null, fp: null, vel: null, snap: null, gain: null, live: false, snapped: false, dead: false, kind: m.type, lastCT: null, gen: 0, pcm: null, pcmState: 'none', pg: null, sched: null };
     this.entries.set(c.id, e);
     if (m.type === 'video') this.openVisual(e, m);
     // Quem continua o clipe anterior (corte) herda o elemento de som dele quando chega a hora (adoptAudio).
-    if ((m.hasAudio || m.type === 'audio') && !this.continuesFrom(p, c)) this.makeAudio(e, m);
+    if (m.hasAudio || m.type === 'audio') {
+      if (this.pcmOn) this.openPcm(e, m);
+      else if (!this.continuesFrom(p, c)) this.makeAudio(e, m);
+    }
     return e;
+  }
+
+  // ---- som pelo WebAudio ----
+  openPcm(e, m) {
+    e.pcmState = 'opening';
+    e.pcm = null;
+    this.ensureAudio(); // parado ele fica suspenso até o primeiro toque em play; já serve para decodificar
+    const path = e.srcPath;
+    openAudio(webBlob(path)).then((src) => {
+      if (e.dead || e.srcPath !== path) return;
+      if (src && this.audioCtx) {
+        e.pcm = src;
+        e.pcmState = 'ready';
+      } else e.pcmState = 'off'; // formato que não dá: este clipe usa o <audio>
+      this.wake();
+    });
+  }
+
+  outLat() {
+    const c = this.audioCtx;
+    return Math.min(0.25, (c.outputLatency || 0) + (c.baseLatency || 0));
+  }
+
+  pcmGain(e) {
+    if (!e.pg) {
+      e.pg = this.audioCtx.createGain();
+      e.pg.connect(this.audioCtx.destination);
+    }
+    return e.pg;
+  }
+
+  stopPcm(e) {
+    const s = e.sched;
+    if (!s) return;
+    e.sched = null;
+    for (const n of s.nodes) {
+      try {
+        n.stop();
+        n.disconnect();
+      } catch {}
+    }
+  }
+
+  stopAllPcm() {
+    for (const e of this.entries.values()) this.stopPcm(e);
+  }
+
+  // Agenda um trecho de som no instante "when" do relógio de áudio, começando em "offset" segundos dentro dele; termina no fim do clipe.
+  place(e, c, buf, kk, when, offset) {
+    const n = this.audioCtx.createBufferSource();
+    n.buffer = buf;
+    n.connect(this.pcmGain(e));
+    n.start(when, offset);
+    const endIn = c.out - kk * CHUNK;
+    if (endIn < CHUNK) n.stop(when + Math.max(0, endIn - offset));
+    const sched = e.sched;
+    sched.nodes.push(n);
+    n.onended = () => {
+      const i = sched.nodes.indexOf(n);
+      if (i >= 0) sched.nodes.splice(i, 1);
+    };
+  }
+
+  // Começa o som do clipe: o instante de saída e a posição no arquivo saem do MESMO relógio da linha do tempo, então imagem
+  // e som nascem juntos (inclusive nas emendas: o clipe seguinte é agendado antes, para o instante exato em que começa).
+  startPcm(e, c, tN, upcoming) {
+    const ctx = this.audioCtx;
+    const N = ctx.currentTime;
+    const lat = this.outLat();
+    let S;
+    let O;
+    if (upcoming) {
+      S = N + (c.start - tN) - lat;
+      if (S < N + 0.01) return;
+      O = c.in;
+    } else {
+      S = N + 0.02;
+      O = Math.max(c.in, sourceAt(c, tN + 0.02 + lat - c.start));
+    }
+    if (O >= c.out) return;
+    const kk = Math.floor(O / CHUNK);
+    const buf = e.pcm.get(kk);
+    if (!buf) {
+      e.pcm.ensure(kk, ctx);
+      this.stats.pcmWait = (this.stats.pcmWait || 0) + 1;
+      return;
+    }
+    e.sched = { nodes: [], nextCtx: S + ((kk + 1) * CHUNK - O), nextK: kk + 1, anchorCtx: S, anchorSrc: O };
+    this.place(e, c, buf, kk, S, O - kk * CHUNK);
+    this.stats.pcmStarts = (this.stats.pcmStarts || 0) + 1;
+  }
+
+  extendPcm(e, c) {
+    const ctx = this.audioCtx;
+    const N = ctx.currentTime;
+    const s = e.sched;
+    if (s.nextCtx < N + 0.005) {
+      // o próximo trecho não ficou pronto a tempo: recomeça pela linha do tempo em vez de tocar fora de lugar
+      this.stopPcm(e);
+      this.stats.pcmLate = (this.stats.pcmLate || 0) + 1;
+      return;
+    }
+    while (s.nextCtx - N < 1.5 && s.nextK * CHUNK < c.out) {
+      const buf = e.pcm.get(s.nextK);
+      if (!buf) {
+        e.pcm.ensure(s.nextK, ctx);
+        break;
+      }
+      this.place(e, c, buf, s.nextK, s.nextCtx, 0);
+      s.nextCtx += CHUNK;
+      s.nextK++;
+    }
+    e.pcm.ensure(s.nextK, ctx);
+  }
+
+  setPcmGain(e, vol) {
+    const g = this.pcmGain(e).gain;
+    if (e.pgv === undefined) g.value = vol;
+    else g.setTargetAtTime(vol, this.audioCtx.currentTime, 0.01);
+    e.pgv = vol;
+  }
+
+  volumeOf(c, p, tr, m, local, end) {
+    const silent = tr.muted || tr.hidden || c.audioDetached || this.muteAll || !m.hasAudio;
+    return silent ? 0 : valueAt(c, 'volume', local) * fadeGain(effectiveAudio(p, c), local, end - c.start) * duckGainAt(p, useStore.getState().cache, this.mediaMap, c, local);
   }
 
   pool = [];
@@ -90,6 +225,10 @@ export class LiteEngine extends Engine {
 
   // Primeiro toque (play): deixa alguns elementos de som prontos para tocar a qualquer hora.
   unlockAudio() {
+    this.ensureAudio(); // cria/retoma o WebAudio dentro do toque (o iPhone só deixa assim)
+    try {
+      navigator.audioSession.type = 'playback'; // toca mesmo com o botão de silêncio ligado
+    } catch {}
     if (this.unlocked) return;
     this.unlocked = true;
     for (let i = 0; i < 4; i++) {
@@ -240,6 +379,11 @@ export class LiteEngine extends Engine {
     if (!e) return;
     e.dead = true;
     this.dropVisual(e);
+    this.stopPcm(e);
+    try {
+      e.pg?.disconnect();
+    } catch {}
+    e.pg = null;
     if (e.el) {
       this.freeAudio(e.el);
       e.el = null;
@@ -338,6 +482,7 @@ export class LiteEngine extends Engine {
       this.lastWritten = this.lastTime;
     }
     this.playing = false;
+    this.stopAllPcm();
     const st = useStore.getState();
     const tNow = st.currentTime;
     for (const [id, e] of this.entries) {
@@ -364,7 +509,10 @@ export class LiteEngine extends Engine {
 
     if (this.playing) {
       // Se alguém mudou o tempo (clique na régua, atalhos), o relógio recomeça dali.
-      if (Math.abs(t - this.lastWritten) > 1e-6) this.clock = { t0: t, wall0: now };
+      if (Math.abs(t - this.lastWritten) > 1e-6) {
+        this.clock = { t0: t, wall0: now };
+        this.stopAllPcm(); // pulou na linha do tempo: o som recomeça dali
+      }
       const total = projectDuration(p);
       t = Math.max(0, this.clock.t0 + (now - this.clock.wall0) / 1000);
       let ended = false;
@@ -436,11 +584,20 @@ export class LiteEngine extends Engine {
         if (t >= end) {
           if (e.fp || e.vel) this.dropVisual(e);
           if (e.el && !e.el.paused) e.el.pause();
+          this.stopPcm(e);
           continue;
         }
         // Próximo clipe: deixa os primeiros quadros prontos e o som posicionado (e quente, se já vai começar).
         if (lead < this.nextLead && !this.scrubbing) {
           if (e.fp) e.fp.step(sourceAt(c, 0) * 1e6, 'idle');
+          if (e.pcmState === 'ready') {
+            // som do próximo clipe: trecho decodificado e, a ~1,2 s do começo, já agendado para o instante exato
+            e.pcm.ensure(Math.floor(c.in / CHUNK), this.audioCtx);
+            if (this.playing && lead < 1.2 && !e.sched && sourceSpeedOne(c) && this.audioCtx.state === 'running') {
+              this.setPcmGain(e, this.volumeOf(c, p, tr, m, 0, end));
+              this.startPcm(e, c, t + (performance.now() - now) / 1000, true);
+            }
+          }
           if (e.el) {
             if (this.needsGain(c, p)) this.connect(e, 2);
             if (e.el.readyState >= 1 && !e.el.seeking && Math.abs(e.el.currentTime - c.in) > 0.05) {
@@ -475,7 +632,15 @@ export class LiteEngine extends Engine {
       }
 
       // som
-      if (!e.el && (m.hasAudio || m.type === 'audio') && !this.adoptAudio(e, c, p)) this.makeAudio(e, m);
+      const hasSound = m.hasAudio || m.type === 'audio';
+      if (hasSound && e.pcmState === 'opening') continue; // ainda abrindo o arquivo de som: entra assim que abrir, na posição certa
+      if (hasSound && e.pcmState === 'ready' && speed === 1 && !c.curve) {
+        if (e.el && !e.el.paused) e.el.pause();
+        this.driveVoice(e, c, p, tr, m, t, target, end, now);
+        continue;
+      }
+      if (e.sched) this.stopPcm(e); // velocidade mudou: este trecho passa para o <audio>
+      if (!e.el && hasSound && !this.adoptAudio(e, c, p)) this.makeAudio(e, m);
       const el = e.el;
       if (!el) continue;
       const silent = tr.muted || tr.hidden || c.audioDetached || this.muteAll || !m.hasAudio;
@@ -535,6 +700,42 @@ export class LiteEngine extends Engine {
       this.invalidate(100);
       console.error(err);
     }
+  }
+
+  // Som de um clipe que está tocando (WebAudio): volume pelo ganho; parado, só deixa os trechos decodificados.
+  driveVoice(e, c, p, tr, m, t, target, end, now) {
+    const ctx = this.audioCtx;
+    if (!ctx) return;
+    if (e.pcm.failed) {
+      // o aparelho não decodificou este som: o clipe volta para o <audio> (na próxima passada)
+      console.warn('som pelo WebAudio falhou, usando <audio>:', e.pcm.failed?.message || e.pcm.failed);
+      this.stopPcm(e);
+      e.pcmState = 'off';
+      this.wake();
+      return;
+    }
+    const vol = this.volumeOf(c, p, tr, m, t - c.start, end);
+    this.setPcmGain(e, vol);
+    const k = Math.floor(target / CHUNK);
+    if (!this.playing) {
+      if (e.sched) this.stopPcm(e);
+      if (!this.scrubbing) {
+        e.pcm.ensure(k, ctx);
+        e.pcm.ensure(k + 1, ctx);
+      }
+      return;
+    }
+    if (ctx.state !== 'running') {
+      // O relógio de áudio só anda depois que o aparelho liga a saída (cerca de 100 ms no primeiro toque): o som entra então,
+      // já na posição certa, em vez de ser agendado num relógio parado e sair atrasado.
+      ctx.resume?.();
+      return;
+    }
+    if (!e.sched) {
+      e.pcm.ensure(k + 1, ctx);
+      this.startPcm(e, c, t + (performance.now() - now) / 1000, false);
+    }
+    if (e.sched) this.extendPcm(e, c);
   }
 
   // O relógio da linha do tempo é o do aparelho (nunca volta nem espera); o som é que o acompanha. Ligado a frio ele
@@ -620,3 +821,5 @@ export class LiteEngine extends Engine {
     }
   }
 }
+
+const sourceSpeedOne = (c) => !c.curve && (c.speed == null || c.speed === 1);

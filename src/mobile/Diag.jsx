@@ -38,7 +38,7 @@ export default function Diag({ onClose }) {
         const el = e.el;
         const src = /-p\/previa\.mp4$/.test(e.srcPath || '') ? ' · PRÉVIA LEVE' : ' · original';
         const vis = e.fp ? ` · imagem: quadros${e.fp.failed ? ' FALHOU ' + String(e.fp.failed.message || e.fp.failed).slice(0, 40) : ''} (${decoderMode(e.fp.src)}, ${e.fp.stats.decoded} quadros, ${e.fp.stats.resets} buscas${e.fp.src.reorder ? ', B-frames' : ''}${e.fp.src.rot ? ', girado ' + e.fp.src.rot + '°' : ''})` : e.vel ? ' · imagem: <video> mudo' : m.type === 'video' ? ' · imagem: abrindo' : '';
-        rows.push(`${m.type[0]} ${m.name.slice(0, 14)}${media ? ` desvio ${drift} ms · ${el ? (el.paused ? 'som PARADO' : 'som tocando') : ''}${el?.seeking ? ' buscando' : ''} · estado ${el?.readyState ?? '-'}${e.live ? ' · live' : ''}${e.gain ? ' · WebAudio' : ''}` : ''}${src}${vis}${q ? ` · perdidos ${q.droppedVideoFrames}/${q.totalVideoFrames}` : ''}${pc?.proxyState ? ` · cópia leve: ${pc.proxyState}${pc.proxyError ? ' (' + pc.proxyError.slice(0, 220) + ')' : ''}` : ''}`);
+        rows.push(`${m.type[0]} ${m.name.slice(0, 14)} · som ${e.pcmState === 'ready' ? 'WebAudio' + (e.sched ? ' tocando' : '') : e.pcmState === 'off' ? '<audio> (formato)' : e.pcmState}${media ? ` desvio ${drift} ms · ${el ? (el.paused ? 'som PARADO' : 'som tocando') : ''}${el?.seeking ? ' buscando' : ''} · estado ${el?.readyState ?? '-'}${e.live ? ' · live' : ''}${e.gain ? ' · WebAudio' : ''}` : ''}${src}${vis}${q ? ` · perdidos ${q.droppedVideoFrames}/${q.totalVideoFrames}` : ''}${pc?.proxyState ? ` · cópia leve: ${pc.proxyState}${pc.proxyError ? ' (' + pc.proxyError.slice(0, 220) + ')' : ''}` : ''}`);
       }
       const decNow = [...engine.entries.values()].reduce((a, e) => a + (e.fp ? e.fp.stats.decoded : 0), 0);
       const ua = navigator.userAgent.slice(12, 90);
@@ -46,7 +46,7 @@ export default function Diag({ onClose }) {
         [
           `${engine.playing ? 'TOCANDO' : 'parado'} · t=${t.toFixed(2)} · ${engine.lite ? 'leve' : 'completo'}`,
           `quadros do vídeo/s ${((engine.stats.rvfc - prev.current.rvfc + decNow - prev.current.dec) / dt).toFixed(0)} · desenhos/s ${((draws.current - prev.current.draws) / dt).toFixed(0)} · tempo/s ${((ticks - prev.current.ticks) / dt).toFixed(0)}`,
-          `play() chamado ${engine.stats.plays}x · RECUSADO ${engine.stats.rejects}x ${engine.stats.lastErr || ""} · som: pulos ${engine.stats.resyncs || 0}, esperas ${engine.stats.waits || 0}`,
+          `WebAudio ${engine.audioCtx ? engine.audioCtx.state + ' ' + Math.round(engine.outLat() * 1000) + ' ms' : '-'} · inícios ${engine.stats.pcmStarts || 0}, atrasos ${engine.stats.pcmLate || 0}, esperas ${engine.stats.pcmWait || 0} · play() chamado ${engine.stats.plays}x · RECUSADO ${engine.stats.rejects}x ${engine.stats.lastErr || ""} · som: pulos ${engine.stats.resyncs || 0}, esperas ${engine.stats.waits || 0}`,
           `qualidade ${s.previewQuality} · escala ${s.autoScale}${engine.audioLead != null ? ` · atraso do som ${Math.round(engine.audioLead * 1000)} ms` : ''}`,
           ...rows,
           ua,

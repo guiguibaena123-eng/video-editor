@@ -133,3 +133,15 @@ Todas as etapas planejadas estão prontas. Ideias para depois: mais adesivos des
 - **Desenho**: só quando há quadro novo ou clipe animado (`isAnimated`), não por relógio fixo (o rAF de alguns navegadores não é 60 Hz). Tempo para a interface: `engine.onTick` direto (linha do tempo, contador, tela cheia via `src/mobile/timebus.js`); o store recebe ~10 Hz durante o play (30 Hz dobrava o custo de cada quadro com CPU lenta).
 - **Importação**: H.264 ≤1080p com GOP curto toca direto do original (sem cópia leve; `api.playsDirect`, flag `deciding` no cache); 4K/HEVC/GOP longo continuam com cópia leve. Miniaturas pelos mesmos quadros (20 em ~350 ms), em filas separadas de imagem e som.
 Números (Chrome headless, projeto de 2 clipes): CPU 1x — 30 quadros/s exatos, 0 paradas >60 ms (corte, troca de vídeo, original Full HD com B-frames), play→1º quadro novo ~35 ms, pular ~60–70 ms (antes 50–290), arrastar a linha 77 imagens distintas e quadro final exato, abrir projeto até 1º quadro ~55–85 ms (antes 107–182), importar 2 Full HD ~0,6–1,3 s (antes 5,4 s com cópia leve). CPU 4x: 24–30 quadros/s; 6x: ~20 (limite do teste). Som: desvio médio 11–30 ms. Ferramentas de teste em `scratchpad` da sessão (cdp-frames, cdp-lat, cdp-sync, cdp-drag, cdp-verify*).
+
+
+### Som do celular pelo WebAudio (22/10/2026)
+O `<audio>` por clipe do iPhone leva 0,2–1 s para começar, busca devagar e só se corrige mudando a taxa (estala): era a causa do som
+picotado. Agora, no celular (`LiteEngine`), o AAC de MP4/MOV é demuxado e decodificado com `AudioDecoder` (`src/web/pcm.js`, trechos de
+4 s em `AudioBuffer`) e tocado por `AudioBufferSourceNode` agendado no relógio do `AudioContext`. O instante de saída e a posição no
+arquivo saem do mesmo relógio da linha do tempo (`startPcm`), então começar, pular e emendar clipes não têm espera nem busca; o clipe
+seguinte é agendado ~1,2 s antes, no instante exato do corte. Só vale para velocidade 1 e sem curva; fora disso (ou se o formato/decodificador
+falhar, `pcm.failed`) o clipe usa o `<audio>` de antes. `?el` no endereço (ou `localStorage ve.el=1`) desliga o WebAudio para comparar.
+Detalhes: o contexto só agenda quando `state === 'running'` (senão sairia atrasado); `navigator.audioSession.type = 'playback'` para tocar
+com o botão de silêncio do iPhone ligado; `outputLatency + baseLatency` entram na conta. Diagnóstico mostra `WebAudio` por clipe e os
+contadores `inícios/atrasos/esperas`. Sem isso verificado em iPhone real ainda (só Chrome): conferir com o botão "Testar".

@@ -42,6 +42,11 @@ function probe() {
     for (const c of activeClips(s, t)) {
       const e = engine.entries.get(c.id);
       if (e?.el && !e.el.paused && e.live) rec.drift.push(Math.abs(e.el.currentTime - sourceAt(c, t - c.start)) * 1000);
+      // WebAudio: onde o som está (pelo relógio de áudio) contra onde a linha do tempo está (pelo relógio do aparelho)
+      else if (e?.sched && engine.audioCtx && engine.audioCtx.currentTime > e.sched.anchorCtx + 0.1) {
+        const heard = e.sched.anchorSrc + (engine.audioCtx.currentTime - e.sched.anchorCtx) - engine.outLat();
+        rec.drift.push(Math.abs(heard - sourceAt(c, t - c.start)) * 1000);
+      }
     }
   }, 100);
   rec.stop = () => {
@@ -77,7 +82,7 @@ async function playFor(from, secs) {
   const resync = (engine.stats.resyncs || 0) - (st0.resyncs || 0);
   const waits = (engine.stats.waits || 0) - (st0.waits || 0);
   const rej = (engine.stats.rejects || 0) - (st0.rejects || 0);
-  return `${summarize(rec, real)} · som: pulos ${resync}, esperas ${waits}${rej ? ', RECUSADO ' + rej : ''}`;
+  return `${summarize(rec, real)} · som: pulos ${resync}, esperas ${waits}, WebAudio ${(engine.stats.pcmStarts||0) - (st0.pcmStarts||0)} inícios/${(engine.stats.pcmLate||0) - (st0.pcmLate||0)} atrasos${rej ? ', RECUSADO ' + rej : ''}`;
 }
 
 export async function runSelfTest(log) {
