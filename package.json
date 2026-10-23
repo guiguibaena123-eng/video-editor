@@ -1,7 +1,7 @@
 {
   "name": "video-editor",
   "productName": "Video Editor",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Editor de vídeo para desktop",
   "main": "electron/main.cjs",
   "type": "module",
