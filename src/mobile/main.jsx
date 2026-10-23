@@ -11,6 +11,10 @@ import './m.css';
 
 installWebApi();
 useStore.setState({ zoom: 90 });
+// Quem nunca escolheu a qualidade da prévia começa em "Original" (a resolução do vídeo, também em 4K).
+try {
+  if (!localStorage.getItem('ve.previewQuality')) useStore.setState({ previewQuality: 'high' });
+} catch {}
 // Motor do celular: imagem decodificada quadro a quadro (WebCodecs) e som num elemento de áudio. Sem WebCodecs
 // (navegador antigo) continua o motor de <video> no perfil leve.
 const legacy = (() => {

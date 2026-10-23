@@ -3,7 +3,7 @@ import { useStore, projectDuration, clipDur, ASPECTS, DEFAULT_TRANSFORM, setPrev
 import { engine, IOS_LIKE } from '../engine';
 import { onTime, timeNow } from './timebus';
 import { transformAt, valueAt, applyProp, hasKeyframes, findKey, setKeyframe, removeKeyframe, keyframeTimes, KF_PROPS, EASES } from '../keyframes';
-import { addMediaToTimeline, deleteSelection, duplicateSelection, goHome, seek, setClipSpeed, setProjectFormat, splitAtPlayhead } from '../ops';
+import { addMediaToTimeline, deleteSelection, duplicateSelection, ensureProxies, goHome, seek, setClipSpeed, setProjectFormat, splitAtPlayhead } from '../ops';
 import { Icon } from '../icons';
 import { clamp, fmtDuration } from '../util';
 import MTimeline from './Timeline';
@@ -347,11 +347,14 @@ function FormatSheet() {
       </div>
       <p className="msec">Prévia no player</p>
       <div className="mchips">
-        <button className={'mchip' + (quality !== 'high' ? ' on' : '')} onClick={() => setPreviewQuality('auto')}>
-          Leve (recomendado)
+        <button className={'mchip' + (quality !== 'high' ? ' on' : '')} onClick={() => {
+            setPreviewQuality('auto');
+            ensureProxies();
+          }}>
+          Leve (mais fluido)
         </button>
         <button className={'mchip' + (quality === 'high' ? ' on' : '')} onClick={() => setPreviewQuality('high')}>
-          Original
+          Original (4K)
         </button>
       </div>
       <p className="mhint">A prévia leve toca uma cópia pequena do vídeo, feita sozinha no aparelho. A exportação sempre usa o vídeo original.</p>

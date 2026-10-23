@@ -28,6 +28,11 @@ export class LiteEngine extends Engine {
   nextLead = 3; // quantos segundos antes o próximo clipe começa a ser preparado
   audioLead = 0.08; // quanto o som é posto à frente ao ligar a frio (aprende o atraso real do aparelho)
   fpOn = framesSupported();
+  gate = null;
+  imgLag = 0; // quanto a imagem mostrada está atrás da linha do tempo (s, média): o som espera por ela
+  avApplied = 0; // atraso que o som está usando agora
+  avAt = 0;
+  drawLag = 0.016; // quanto a imagem demora para aparecer depois de escolhida (segundos)
   // Som pelo WebAudio (ver web/pcm.js). "?el" no endereço volta ao <audio> por clipe, para comparar.
   pcmOn = pcmSupported() && !/[?&]el\b/.test(location.search) && localStorage.getItem('ve.el') !== '1';
   fpStats = { opened: 0, fallback: 0 };
@@ -59,7 +64,8 @@ export class LiteEngine extends Engine {
   // ---------------------------------------------------------------------------------------------------------------
   sourcePath(m) {
     const s = useStore.getState();
-    return s.previewQuality !== 'high' && s.cache[m.id]?.proxy ? s.cache[m.id].proxy : m.path;
+    const c = s.cache[m.id];
+    return (s.previewQuality !== 'high' || c?.needsProxy) && c?.proxy ? c.proxy : m.path;
   }
 
   ensureEntry(c, m, p) {
@@ -109,6 +115,18 @@ export class LiteEngine extends Engine {
       } else e.pcmState = 'off'; // formato que não dá: este clipe usa o <audio>
       this.wake();
     });
+  }
+
+  // Instante do relógio de áudio que estará saindo pelo alto-falante no instante P do relógio da página (performance.now).
+  // getOutputTimestamp traz o par exato (inclui a latência de saída); o Safari não o tem: aproxima pela latência declarada.
+  audibleAt(P) {
+    const c = this.audioCtx;
+    try {
+      const ts = c.getOutputTimestamp?.();
+      // (logo depois de o contexto acordar de uma pausa o par ainda é o de antes dela: só vale se for recente)
+      if (ts && ts.performanceTime > 0 && ts.contextTime > 0 && Math.abs(performance.now() - ts.performanceTime) < 250) return ts.contextTime + (P - ts.performanceTime) / 1000;
+    } catch {}
+    return c.currentTime + (P - performance.now()) / 1000 - this.outLat();
   }
 
   outLat() {
@@ -161,16 +179,24 @@ export class LiteEngine extends Engine {
   startPcm(e, c, tN, upcoming) {
     const ctx = this.audioCtx;
     const N = ctx.currentTime;
-    const lat = this.outLat();
+    const P0 = performance.now();
+    const lat = Math.max(0.005, N - this.audibleAt(P0)); // quanto o que se agenda demora para sair
+    // Imagem pesada que chega atrasada: o som espera por ela (senão sai na frente), até 0,25 s.
+    if (!upcoming) {
+      this.avApplied = this.imgLag > 0.03 ? Math.min(0.25, this.imgLag) : 0;
+      this.avAt = performance.now();
+    }
+    const av = this.avApplied;
     let S;
     let O;
     if (upcoming) {
-      S = N + (c.start - tN) - lat;
+      S = this.audibleAt(P0 + (c.start - tN + av) * 1000);
       if (S < N + 0.01) return;
       O = c.in;
     } else {
-      S = N + 0.02;
-      O = Math.max(c.in, sourceAt(c, tN + 0.02 + lat - c.start));
+      const wait = Math.max(0.03, lat + 0.02); // daqui a quanto o som começa a sair
+      S = this.audibleAt(P0 + wait * 1000);
+      O = Math.max(c.in, sourceAt(c, tN + wait - av - c.start));
     }
     if (O >= c.out) return;
     const kk = Math.floor(O / CHUNK);
@@ -310,7 +336,7 @@ export class LiteEngine extends Engine {
   proxyPending(m) {
     const s = useStore.getState();
     const c = s.cache[m.id];
-    return s.previewQuality !== 'high' && (c?.proxyState === 'working' || !!c?.deciding);
+    return !!c?.deciding || ((s.previewQuality !== 'high' || !!c?.needsProxy) && c?.proxyState === 'working');
   }
 
   openVisual(e, m) {
@@ -464,6 +490,10 @@ export class LiteEngine extends Engine {
     this.scrubbing = false;
     this.unlockAudio();
     if (this.audioCtx?.state === 'suspended') this.audioCtx.resume();
+    // Vídeo pesado (4K): o relógio e o som só começam quando a imagem já está na tela e o decodificador já anda, senão o som
+    // sai na frente da imagem. Máx. ~1,5 s.
+    this.imgLag *= 0.5;
+    this.gate = { until: performance.now() + 2500 };
     this.playing = true;
     useStore.setState({ playing: true, currentTime: start });
     // O navegador só deixa o som começar a partir de um toque: roda o primeiro passo já, dentro do toque.
@@ -482,6 +512,7 @@ export class LiteEngine extends Engine {
       this.lastWritten = this.lastTime;
     }
     this.playing = false;
+    this.gate = null;
     this.stopAllPcm();
     const st = useStore.getState();
     const tNow = st.currentTime;
@@ -496,6 +527,25 @@ export class LiteEngine extends Engine {
     this.invalidate(600);
   }
 
+  // A imagem de todos os vídeos sob o cursor está pronta e o decodificador já tem quadros à frente?
+  gateReady(p, t) {
+    for (const c of p.clips) {
+      if (t < c.start || t >= clipEnd(c)) continue;
+      const m = this.mediaMap?.get(c.mediaId);
+      if (!m || m.type !== 'video' || m.missing) continue;
+      const e = this.entries.get(c.id);
+      if (!e) return false;
+      if (e.fp) {
+        if (e.fp.failed) continue;
+        if (!e.fp.ready(sourceAt(c, t - c.start) * 1e6)) return false;
+        if (e.fp.queue.length < 2 && e.fp.next < e.fp.src.n) return false;
+      } else if (e.vel) {
+        if (e.vel.readyState < 2) return false;
+      } else if (!this.proxyPending(m)) return false;
+    }
+    return true;
+  }
+
   // ---------------------------------------------------------------------------------------------------------------
   // Um passo do motor (a cada quadro de animação)
   // ---------------------------------------------------------------------------------------------------------------
@@ -508,6 +558,10 @@ export class LiteEngine extends Engine {
     let t = s.currentTime;
 
     if (this.playing) {
+      if (this.gate) {
+        if (now > this.gate.until || this.gateReady(p, t)) this.gate = null;
+        this.clock = { t0: this.clock.t0, wall0: now }; // enquanto espera, o relógio fica parado
+      }
       // Se alguém mudou o tempo (clique na régua, atalhos), o relógio recomeça dali.
       if (Math.abs(t - this.lastWritten) > 1e-6) {
         this.clock = { t0: t, wall0: now };
@@ -606,7 +660,7 @@ export class LiteEngine extends Engine {
           if (e.pcmState === 'ready') {
             // som do próximo clipe: trecho decodificado e, a ~1,2 s do começo, já agendado para o instante exato
             e.pcm.ensure(Math.floor(c.in / CHUNK), this.audioCtx);
-            if (this.playing && lead < 1.2 && !e.sched && sourceSpeedOne(c) && this.audioCtx.state === 'running') {
+            if (this.playing && !this.gate && lead < 1.2 && !e.sched && sourceSpeedOne(c) && this.audioCtx.state === 'running') {
               this.setPcmGain(e, this.volumeOf(c, p, tr, m, 0, end));
               this.startPcm(e, c, t + (performance.now() - now) / 1000, true);
             }
@@ -635,10 +689,15 @@ export class LiteEngine extends Engine {
         this.fallbackVisual(e);
       }
       if (m.type === 'video' && !e.fp && !e.vel && !e.opening && !this.proxyPending(m)) this.openVisual(e, m); // voltou a um clipe que já tinha passado
-      const us = target * 1e6;
+      // A imagem só aparece depois de desenhada (e a tela, de atualizar): escolhe o quadro que estará certo QUANDO aparecer.
+      const us = (this.playing ? sourceAt(c, local + this.drawLag) : target) * 1e6;
       if (e.fp) {
         e.fp.step(us, this.playing ? 'play' : this.scrubbing ? 'scrub' : 'idle');
         if (!e.fp.ready(us)) pending = true;
+        if (this.playing && !this.gate && e.fp.cur) {
+          const lag = Math.max(0, Math.min(0.3, target - e.fp.curTs / 1e6));
+          this.imgLag += (lag - this.imgLag) * 0.08;
+        }
       } else if (e.vel) {
         this.driveVisualEl(e, target, speed);
         if (e.vel.readyState < 2) pending = true;
@@ -646,6 +705,7 @@ export class LiteEngine extends Engine {
 
       // som
       const hasSound = m.hasAudio || m.type === 'audio';
+      if (this.gate && this.playing) continue; // esperando a imagem: o som também espera
       if (hasSound && e.pcmState === 'opening') continue; // ainda abrindo o arquivo de som: entra assim que abrir, na posição certa
       if (hasSound && e.pcmState === 'ready' && speed === 1 && !c.curve) {
         if (e.el && !e.el.paused) e.el.pause();
@@ -705,8 +765,10 @@ export class LiteEngine extends Engine {
     this.lastSig = sig;
     this.drewNow = true;
     this.drawnOnce = true;
+    const d0 = performance.now();
     try {
       this.draw(t, p, mediaById);
+      if (this.playing) this.drawLag = 0.016 + Math.min(0.12, (this.drawLag - 0.016) * 0.9 + ((performance.now() - d0) / 1000) * 0.1);
     } catch (err) {
       // um desenho que falha no meio deixa a tela pela metade: refaz no próximo quadro em vez de ficar assim
       this.needDraw = true;
@@ -748,7 +810,27 @@ export class LiteEngine extends Engine {
       e.pcm.ensure(k + 1, ctx);
       this.startPcm(e, c, t + (performance.now() - now) / 1000, false);
     }
-    if (e.sched) this.extendPcm(e, c);
+    if (e.sched) {
+      // A imagem se atrasou (ou se recuperou) de forma duradoura: recomeça o som com o atraso novo (no máximo a cada 3 s).
+      const want = this.imgLag > 0.03 ? Math.min(0.25, this.imgLag) : 0;
+      if (Math.abs(want - this.avApplied) > 0.06 && now - this.avAt > 1500) {
+        // emenda sem corte: o som novo é agendado e o antigo pára no instante em que o novo começa
+        const old = e.sched;
+        e.sched = null;
+        this.startPcm(e, c, t + (performance.now() - now) / 1000, false);
+        if (e.sched) {
+          for (const n of old.nodes) {
+            try {
+              n.stop(e.sched.anchorCtx);
+            } catch {}
+          }
+          this.stats.avResync = (this.stats.avResync || 0) + 1;
+        } else e.sched = old;
+        this.avAt = performance.now();
+        return;
+      }
+      this.extendPcm(e, c);
+    }
   }
 
   // O relógio da linha do tempo é o do aparelho (nunca volta nem espera); o som é que o acompanha. Ligado a frio ele

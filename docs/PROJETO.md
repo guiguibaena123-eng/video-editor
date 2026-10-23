@@ -155,3 +155,19 @@ em software), com fila pequena (3 quadros: cada um ~12 MB) e no máximo dois dec
 re-renderiza quando miniaturas/onda mudam (o progresso da cópia leve mudava o cache a cada 400 ms). Números no Chrome (CPU 1×): 24
 quadros/s, 0 paradas >60 ms, pulos 10–50 ms com cópia leve; sem ela (4K HEVC direto) pulos de 300–700 ms e arrasto pesado — por isso a cópia
 leve é o caminho certo para 4K.
+
+### Original (4K) no player + som preso à imagem (22/10/2026)
+- **Qualidade da prévia**: quem nunca escolheu começa em "Original (4K)" (`previewQuality='high'`): o player usa o vídeo como veio e o palco
+  fica na resolução da tela (×2). A cópia leve só é criada para vídeo que o `FramePlayer` não consegue decodificar direto
+  (`api.canFrames` falso: GOP > 90 em ≤ Full HD, > 60 em 4K, codec/formato) — `cache.needsProxy`. "Leve (mais fluido)" no menu Formato
+  constrói as cópias que faltarem (`ops.ensureProxies`).
+- **Início sincronizado** (`LiteEngine.gate`): ao dar play o relógio (e o som) ficam parados até a imagem do ponto estar na tela e o
+  decodificador ter ≥ 2 quadros à frente (máx. 2,5 s). Antes o som saía 100–400 ms na frente da imagem em vídeo pesado.
+  `drawLag` escolhe o quadro que estará certo QUANDO aparecer (custo do desenho medido); `imgLag` (média do atraso da imagem) atrasa o
+  som em até 0,25 s se a imagem não acompanha (re-agenda o som sem corte, no máx. a cada 1,5 s).
+- **Relógio de áudio ↔ página**: `audibleAt(P)` usa `getOutputTimestamp()` (só se o par for recente: logo após acordar de uma pausa o
+  par é velho) e cai para `currentTime − latência` no Safari.
+- **HEVC com GOP aberto** (iPhone): as imagens que aparecem *antes* da chave mas são decodificadas depois dela dependem do grupo
+  anterior; recomeçar na chave mais próxima as perdia (quadros faltando a cada pulo) e, com `drawLag` oscilando o alvo entre dois
+  quadros, causava uma tempestade de recomeços (99 em 3 s). Agora `Source.keyForRank(r)` acha o último quadro-chave cujo RANK
+  (ordem de exibição) não passa de r, e saídas de uma sequência abandonada são ignoradas (`sentTs`).

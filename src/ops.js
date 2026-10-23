@@ -563,9 +563,34 @@ function setCache(id, patch) {
   useStore.setState((s) => ({ cache: { ...s.cache, [id]: { ...s.cache[id], ...patch } } }));
 }
 
-export function loadMediaCache(media) {
+// Reconstrói a cópia leve dos vídeos grandes que ainda não têm (ao sair de "Original" para "Leve").
+export function ensureProxies() {
+  const s = useStore.getState();
+  for (const m of s.media) {
+    const c = s.cache[m.id];
+    if (m.type === 'video' && !m.missing && !c?.proxy && c?.proxyState !== 'working' && c?.proxyState !== 'failed') loadMediaCache(m, true);
+  }
+}
+
+export function loadMediaCache(media, force = false) {
   if (media.missing) return;
   const big = media.type === 'video' && Math.max(media.width, media.height) > (window.api.proxyMinSide ?? PROXY_MIN_SIDE);
+  // "Original": o player usa o vídeo como veio (também em 4K), sem a cópia leve — a não ser que o player não consiga
+  // decodificá-lo direto (formato, grupos de quadros longos demais): aí a cópia leve evita o <video> pesado.
+  if (!force && big && window.api.canFrames && useStore.getState().previewQuality === 'high') {
+    setCache(media.id, { deciding: true });
+    window.api.canFrames(media.path).then(
+      (ok) => {
+        setCache(media.id, { deciding: false, needsProxy: !ok });
+        startMediaCache(media, !ok);
+      },
+      () => {
+        setCache(media.id, { deciding: false, needsProxy: true });
+        startMediaCache(media, true);
+      },
+    );
+    return;
+  }
   // Celular com decodificação própria: vídeo H.264 de até Full HD com grupos de quadros curtos toca direto do original
   // (sem esperar a cópia leve). O resto (4K, outro codec, grupos longos) continua com a cópia leve.
   if (big && window.api.playsDirect) {

@@ -115,23 +115,28 @@ async function load(blob) {
   }
   if (!sync[0]) throw new Error('começa sem quadro-chave');
   gop = Math.max(gop, n - lastKey);
-  if (gop > MAX_GOP) throw new Error('grupo de quadros longo demais (' + gop + ')');
+  // (em 4K cada quadro custa ~20 ms para decodificar: um pulo decodifica até um grupo inteiro, então o limite é menor)
+  if (gop > (w * h > MAX_DIRECT_PIXELS ? 60 : MAX_GOP)) throw new Error('grupo de quadros longo demais (' + gop + ')');
   // Ordem de exibição: rank (0..n-1) de cada amostra, e "até qual amostra decodificar" para mostrar cada rank.
   let order; // rank -> índice na ordem de decodificação
+  let rank; // índice na ordem de decodificação -> rank (posição na ordem de exibição)
   let pts; // tempo de exibição por rank, crescente
   let need; // rank -> maior índice de decodificação necessário para mostrar todos os quadros até esse rank
   if (reorder) {
     order = Int32Array.from({ length: n }, (_, i) => i).sort((a, b) => ctsDec[a] - ctsDec[b]);
     pts = new Float64Array(n);
     need = new Int32Array(n);
+    rank = new Int32Array(n);
     let mx = 0;
     for (let r = 0; r < n; r++) {
       pts[r] = ctsDec[order[r]];
+      rank[order[r]] = r;
       mx = Math.max(mx, order[r]);
       need[r] = mx;
     }
   } else {
     order = Int32Array.from({ length: n }, (_, i) => i);
+    rank = order;
     pts = ctsDec;
     need = order;
   }
@@ -148,7 +153,7 @@ async function load(blob) {
 
   const swap = rot === 90 || rot === 270;
   const duration = (pts[n - 1] + dur[order[n - 1]]) / 1e6;
-  return new Source(blob, { n, cts: ctsDec, pts, order, need, dur, off, sz, sync, w, h, dw: swap ? h : w, dh: swap ? w : h, rot, reorder, config, gop, duration, avc });
+  return new Source(blob, { n, cts: ctsDec, pts, order, rank, need, dur, off, sz, sync, w, h, dw: swap ? h : w, dh: swap ? w : h, rot, reorder, config, gop, duration, avc });
 }
 
 class Source {
@@ -167,6 +172,14 @@ class Source {
       else hi = mid - 1;
     }
     return lo;
+  }
+  // Quadro-chave de onde decodificar para mostrar o quadro de rank "r": o último cujo rank (ordem de EXIBIÇÃO) não passa de r.
+  // (Em GOP aberto, as imagens que vêm logo antes da chave na tela são decodificadas DEPOIS dela e dependem do grupo anterior:
+  // começar na chave de decodificação mais próxima as perderia.)
+  keyForRank(r) {
+    let i = this.order[Math.min(this.n - 1, r)];
+    while (i > 0 && !(this.sync[i] && this.rank[i] <= r)) i--;
+    return i;
   }
   keyAtOrBefore(i) {
     while (i > 0 && !this.sync[i]) i--;
@@ -198,6 +211,7 @@ export class FramePlayer {
     this.cur = null; // quadro em exibição
     this.curTs = -1;
     this.queue = []; // quadros decodificados ainda não exibidos, em ordem de tempo
+    this.sentTs = new Set(); // tempos dos quadros enviados desde o último recomeço (saídas de uma sequência abandonada são ignoradas)
     this.blocks = new Map();
     this.reading = new Set();
     this.next = 0; // próxima amostra a enviar ao decodificador
@@ -213,7 +227,9 @@ export class FramePlayer {
       output: (f) => {
         this.waiting = 0;
         if (this.dead) return void f.close();
+        if (!this.sentTs.has(f.timestamp)) return void f.close(); // resto de uma sequência abandonada (chega depois do recomeço)
         this.stats.decoded++;
+        if (globalThis.__FP_DBG) (globalThis.__FP_LOG ||= []).push(['out', Math.round(f.timestamp / 1000), Math.round(performance.now())]);
         const q = this.queue;
         let i = q.length;
         while (i > 0 && q[i - 1].timestamp > f.timestamp) i--;
@@ -251,8 +267,9 @@ export class FramePlayer {
         this.make();
       }
     }
-    this.runKey = s.keyAtOrBefore(s.order[target]);
+    this.runKey = s.keyForRank(target);
     this.next = this.runKey;
+    this.sentTs.clear();
     this.cold = true;
     this.flushed = false;
     this.waiting = 0;
@@ -365,6 +382,7 @@ export class FramePlayer {
         this.cold = false;
         this.waiting = performance.now(); // primeiro quadro depois de uma busca: se demorar demais, troca de decodificador
       }
+      this.sentTs.add(s.cts[i]);
       this.dec.decode(new EncodedVideoChunk({ type: s.sync[i] ? 'key' : 'delta', timestamp: s.cts[i], duration: s.dur[i], data }));
       this.next++;
     }
@@ -399,8 +417,17 @@ export class FramePlayer {
     // um quadro antes do que já foi mostrado, ou adiante de um quadro-chave que ainda não foi enviado (pular direto para
     // ele poupa decodificar o que está no meio; sem quadro-chave no caminho, é só continuar). (Uma volta de 1 quadro,
     // do ajuste fino do relógio, não conta.)
-    const lost = this.runKey < 0 || s.order[target] < this.runKey || (have >= 0 && target < have - 1) || s.keyAtOrBefore(s.order[target]) > this.next + 2;
+    // Também perdido: o que está pronto (fila) já passou do ponto pedido e o quadro mostrado ficou para trás dele — os quadros
+    // do meio já foram descartados e nunca mais chegam (acontece ao pular e dar play logo em seguida).
+    const q0 = this.queue[0];
+    let skipped = !!q0 && q0.timestamp - us > 100000 && (!this.cur || this.curTs < us - 100000);
+    if (skipped) {
+      if (performance.now() - (this.skipAt || 0) < 700) skipped = false; // (se o recomeço não resolveu, o relógio resolve)
+      else this.skipAt = performance.now();
+    }
+    const lost = this.runKey < 0 || skipped || target < s.rank[this.runKey] - 2 || (have >= 0 && target < have - 1) || s.keyForRank(target) > this.next + 2;
     if (lost) {
+      if (globalThis.__FP_DBG) (globalThis.__FP_LOG ||= []).push([Math.round(performance.now()), this.runKey < 0 ? 'noRun' : skipped ? 'skipped' : target < s.rank[this.runKey] - 2 ? 'beforeRun' : have >= 0 && target < have - 1 ? 'back' : 'keyAhead', target, have, this.next, q0 ? Math.round(q0.timestamp / 1000) : null, Math.round(us / 1000), this.cur ? Math.round(this.curTs / 1000) : null]);
       // Buscas em sequência (dedo arrastando) não deixariam nenhuma terminar: dá um respiro ao que já foi pedido.
       const busy = mode === 'scrub' && this.runKey >= 0 && this.dec.decodeQueueSize > 0 && performance.now() - this.lastResetAt < 90;
       if (!busy) this.reset(target);

@@ -338,6 +338,7 @@ export function installWebApi() {
     showItem: () => {},
     saveProject: async () => null,
     previewProxy: makePreviewProxy,
+    canFrames: async (path) => framesSupported() && !!(await openSource(webBlob(path))),
     playsDirect: async (path) => (framesSupported() ? playsDirect(await openSource(webBlob(path))) : false),
     proxyMinSide: 1000, // no celular qualquer vídeo acima de HD ganha prévia leve
     proxyThumbs: true, // e as miniaturas saem da própria geração da cópia

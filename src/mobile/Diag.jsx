@@ -46,7 +46,7 @@ export default function Diag({ onClose }) {
         [
           `${engine.playing ? 'TOCANDO' : 'parado'} · t=${t.toFixed(2)} · ${engine.lite ? 'leve' : 'completo'}`,
           `quadros do vídeo/s ${((engine.stats.rvfc - prev.current.rvfc + decNow - prev.current.dec) / dt).toFixed(0)} · desenhos/s ${((draws.current - prev.current.draws) / dt).toFixed(0)} · tempo/s ${((ticks - prev.current.ticks) / dt).toFixed(0)}`,
-          `WebAudio ${engine.audioCtx ? engine.audioCtx.state + ' ' + Math.round(engine.outLat() * 1000) + ' ms' : '-'} · inícios ${engine.stats.pcmStarts || 0}, atrasos ${engine.stats.pcmLate || 0}, esperas ${engine.stats.pcmWait || 0} · play() chamado ${engine.stats.plays}x · RECUSADO ${engine.stats.rejects}x ${engine.stats.lastErr || ""} · som: pulos ${engine.stats.resyncs || 0}, esperas ${engine.stats.waits || 0}`,
+          `imagem atrás ${Math.round((engine.imgLag || 0) * 1000)} ms · som espera ${Math.round((engine.avApplied || 0) * 1000)} ms · WebAudio ${engine.audioCtx ? engine.audioCtx.state + ' ' + Math.round(engine.outLat() * 1000) + ' ms' : '-'} · inícios ${engine.stats.pcmStarts || 0}, atrasos ${engine.stats.pcmLate || 0}, esperas ${engine.stats.pcmWait || 0} · play() chamado ${engine.stats.plays}x · RECUSADO ${engine.stats.rejects}x ${engine.stats.lastErr || ""} · som: pulos ${engine.stats.resyncs || 0}, esperas ${engine.stats.waits || 0}`,
           `qualidade ${s.previewQuality} · escala ${s.autoScale}${engine.audioLead != null ? ` · atraso do som ${Math.round(engine.audioLead * 1000)} ms` : ''}`,
           ...rows,
           ua,

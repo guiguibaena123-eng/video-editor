@@ -11,7 +11,7 @@ const activeClips = (s, t) => s.project.clips.filter((c) => t >= c.start && t < 
 
 // Observa desenhos, telas pretas (clipe de vídeo sem imagem), pausas do relógio de animação e o desvio do som.
 function probe() {
-  const rec = { draws: [], black: 0, raf: [], drift: [], sigs: new Set() };
+  const rec = { draws: [], black: 0, raf: [], drift: [], sigs: new Set(), lag: [], ahead: [], t0: performance.now() };
   const od = engine.draw.bind(engine);
   engine.draw = (t, ...a) => {
     const s = useStore.getState();
@@ -20,7 +20,11 @@ function probe() {
       const m = s.media.find((x) => x.id === c.mediaId);
       if (m?.type === 'video' && !engine.sourceOf(c, t)) miss = true;
       const e = engine.entries.get(c.id);
-      if (e?.fp) rec.sigs.add(c.id + ':' + e.fp.curTs);
+      if (e?.fp) {
+        rec.sigs.add(c.id + ':' + e.fp.curTs);
+        // quanto a imagem mostrada está atrás do ponto da linha do tempo (ms; positivo = atrasada)
+        if (engine.playing && e.fp.curTs >= 0) rec.lag.push([performance.now() - rec.t0, (sourceAt(c, t - c.start) - e.fp.curTs / 1e6) * 1000]);
+      }
     }
     if (miss) rec.black++;
     rec.draws.push(performance.now());
@@ -43,9 +47,11 @@ function probe() {
       const e = engine.entries.get(c.id);
       if (e?.el && !e.el.paused && e.live) rec.drift.push(Math.abs(e.el.currentTime - sourceAt(c, t - c.start)) * 1000);
       // WebAudio: onde o som está (pelo relógio de áudio) contra onde a linha do tempo está (pelo relógio do aparelho)
-      else if (e?.sched && engine.audioCtx && engine.audioCtx.currentTime > e.sched.anchorCtx + 0.1) {
-        const heard = e.sched.anchorSrc + (engine.audioCtx.currentTime - e.sched.anchorCtx) - engine.outLat();
+      else if (e?.sched && engine.audioCtx && engine.audibleAt(performance.now()) > e.sched.anchorCtx + 0.1) {
+        const heard = e.sched.anchorSrc + (engine.audibleAt(performance.now()) - e.sched.anchorCtx);
         rec.drift.push(Math.abs(heard - sourceAt(c, t - c.start)) * 1000);
+        rec.sound = rec.sound || [];
+        rec.sound.push([performance.now() - rec.t0, (heard - sourceAt(c, t - c.start)) * 1000]);
       }
     }
   }, 100);
@@ -64,7 +70,13 @@ function summarize(rec, secs) {
   const worst = gaps.length ? Math.round(Math.max(...gaps)) : 0;
   const rafWorst = rec.raf.length ? Math.round(Math.max(...rec.raf)) : 0;
   const drift = rec.drift.length ? Math.round(rec.drift.reduce((a, b) => a + b, 0) / rec.drift.length) : null;
-  return `${(rec.sigs.size / secs).toFixed(0)} quadros/s · paradas >60 ms: ${over(60)} · >120 ms: ${over(120)} · pior ${worst} ms · tela preta: ${rec.black} · pior quadro de animação ${rafWorst} ms · desvio do som ${drift == null ? '-' : drift + ' ms'}`;
+  // som à frente da imagem (ms; positivo = o som sai antes da imagem): som contra a linha do tempo + imagem atrás dela
+  const avg = (a) => (a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null);
+  const lagAll = avg(rec.lag.map((x) => x[1]));
+  const lagFirst = avg(rec.lag.filter((x) => x[0] < 1500).map((x) => x[1]));
+  const sAll = avg((rec.sound || []).map((x) => x[1]));
+  const sync = lagAll == null || sAll == null ? '-' : `${sAll + lagAll} ms (primeiro 1,5 s: ${avg((rec.sound || []).filter((x) => x[0] < 1500).map((x) => x[1])) + lagFirst} ms)`;
+  return `${(rec.sigs.size / secs).toFixed(0)} quadros/s · paradas >60 ms: ${over(60)} · >120 ms: ${over(120)} · pior ${worst} ms · tela preta: ${rec.black} · pior quadro de animação ${rafWorst} ms · desvio do som ${drift == null ? '-' : drift + ' ms'} · imagem atrás ${lagAll ?? '-'} ms · SOM À FRENTE DA IMAGEM ${sync}`;
 }
 
 async function playFor(from, secs) {
